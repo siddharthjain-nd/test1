@@ -43,10 +43,60 @@ def main() -> int:
         "--no-dedup", action="store_true", help="Skip the duplicate resolution pass"
     )
     parser.add_argument("--report-only", action="store_true", help="Print the report and exit")
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Show what landed in the reject buckets, then exit",
+    )
+    parser.add_argument(
+        "--inspect",
+        metavar="SUBSTRING",
+        help="Explain what happened to every file whose path contains SUBSTRING, then exit",
+    )
+    parser.add_argument(
+        "--backfill-dates-only",
+        action="store_true",
+        help="Recover missing dates from filenames and folders without rescanning",
+    )
+    parser.add_argument(
+        "--use-mtime",
+        action="store_true",
+        help="Last-resort date fallback to file modification time. Off by default: copying "
+        "a library resets mtimes, and a wrong date is worse than no date.",
+    )
     parser.add_argument("--follow-symlinks", action="store_true")
     args = parser.parse_args()
 
     db_path = args.db or index_db_path()
+
+    if args.diagnose:
+        if not db_path.exists():
+            console.print(f"[red]No index at {db_path}. Run a scan first.[/red]")
+            return 1
+        with store.open_index(db_path, read_only=True) as conn:
+            report.print_diagnostics(conn, console)
+        return 0
+
+    if args.inspect:
+        if not db_path.exists():
+            console.print(f"[red]No index at {db_path}. Run a scan first.[/red]")
+            return 1
+        with store.open_index(db_path, read_only=True) as conn:
+            report.print_path_inspection(conn, args.inspect, console)
+        return 0
+
+    if args.backfill_dates_only:
+        if not db_path.exists():
+            console.print(f"[red]No index at {db_path}. Run a scan first.[/red]")
+            return 1
+        with store.open_index(db_path) as conn:
+            counts = ingest.backfill_dates(conn, use_mtime=args.use_mtime)
+            console.print(
+                f"Recovered dates -- filename: {counts['filename']:,}, "
+                f"folder: {counts['folder']:,}, mtime: {counts['mtime']:,}\n"
+            )
+            report.print_report(conn, console)
+        return 0
 
     if args.report_only:
         if not db_path.exists():
@@ -95,7 +145,14 @@ def main() -> int:
         if not args.no_dedup:
             console.print("\nResolving duplicates (SHA-256 on quick-hash collisions)...")
             count, freed = ingest.resolve_duplicates(conn)
-            console.print(f"{count:,} duplicate file(s), {freed / 1e9:.1f} GB redundant.\n")
+            console.print(f"{count:,} duplicate file(s), {freed / 1e9:.1f} GB redundant.")
+
+        console.print("\nRecovering missing dates from filenames and folders...")
+        counts = ingest.backfill_dates(conn, use_mtime=args.use_mtime)
+        console.print(
+            f"filename: {counts['filename']:,}, folder: {counts['folder']:,}, "
+            f"mtime: {counts['mtime']:,}\n"
+        )
 
         report.print_report(conn, console)
 

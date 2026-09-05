@@ -8,6 +8,7 @@ appear. Until this runs, corpus size is a guess.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
@@ -79,7 +80,7 @@ def print_report(conn: sqlite3.Connection, console: Console | None = None) -> No
         conn, f"SELECT COUNT(*) AS n FROM photos WHERE {where} AND taken_at IS NULL", params
     )[0]
 
-    years = Table(title="Era distribution (EXIF capture date)", header_style="bold")
+    years = Table(title="Era distribution (capture date, any source)", header_style="bold")
     years.add_column("Year")
     years.add_column("Photos", justify="right")
     years.add_column("", justify="left")
@@ -89,8 +90,24 @@ def print_report(conn: sqlite3.Connection, console: Console | None = None) -> No
         bar = "#" * max(1, round(40 * int(row["n"]) / peak))
         years.add_row(str(row["year"]), f"{row['n']:,}", bar)
     if undated["n"]:
-        years.add_row("[yellow]no EXIF date[/yellow]", f"{undated['n']:,}", "")
+        years.add_row("[yellow]no date[/yellow]", f"{undated['n']:,}", "")
     console.print(years)
+
+    source_rows = _rows(
+        conn,
+        f"SELECT COALESCE(taken_at_source, 'none') AS src, COUNT(*) AS n FROM photos "
+        f"WHERE {where} GROUP BY src ORDER BY n DESC",
+        params,
+    )
+    provenance = Table(title="Date provenance", header_style="bold")
+    provenance.add_column("Source")
+    provenance.add_column("Photos", justify="right")
+    provenance.add_column("Share", justify="right")
+    for row in source_rows:
+        share = 100.0 * row["n"] / candidates["n"] if candidates["n"] else 0.0
+        label = "[yellow]no date[/yellow]" if row["src"] == "none" else str(row["src"])
+        provenance.add_row(label, f"{row['n']:,}", f"{share:5.1f}%")
+    console.print(provenance)
 
     camera_rows = _rows(
         conn,
@@ -128,9 +145,9 @@ def _print_warnings(
 
     if candidates and undated / candidates > 0.25:
         warnings.append(
-            f"{undated:,} candidates ({100 * undated / candidates:.0f}%) have no EXIF date. "
-            "Era stratification and the Phase 4 time prior both weaken. "
-            "Consider falling back to file mtime."
+            f"{undated:,} candidates ({100 * undated / candidates:.0f}%) still have no date after "
+            "filename and folder recovery. Era stratification and the Phase 4 time prior both "
+            "weaken. Rerun with --use-mtime if the drive's modification times are trustworthy."
         )
 
     if len(year_rows) < 3:
@@ -163,3 +180,156 @@ def _print_warnings(
         console.print("\n[bold yellow]Warnings[/bold yellow]")
         for warning in warnings:
             console.print(f"  - {warning}")
+
+
+def print_diagnostics(conn: sqlite3.Connection, console: Console | None = None) -> None:
+    """Explain what landed in the reject buckets, so nothing is discarded blindly."""
+    console = console or Console()
+
+    unsupported = Table(title="Unsupported extensions", header_style="bold")
+    unsupported.add_column("Extension")
+    unsupported.add_column("Files", justify="right")
+    unsupported.add_column("Size", justify="right")
+    unsupported.add_column("Example")
+    for row in _rows(
+        conn,
+        "SELECT LOWER(reason) AS ext, COUNT(*) AS n, COALESCE(SUM(size_bytes),0) AS b, "
+        "MIN(rel_path) AS example FROM photos WHERE kind = 'unsupported' "
+        "GROUP BY ext ORDER BY n DESC LIMIT 25",
+    ):
+        unsupported.add_row(
+            str(row["ext"]),
+            f"{row['n']:,}",
+            f"{row['b'] / 1e6:.0f} MB",
+            str(row["example"])[:60],
+        )
+    console.print(unsupported)
+
+    unreadable = Table(title="Unreadable files", header_style="bold")
+    unreadable.add_column("Path")
+    unreadable.add_column("Size", justify="right")
+    unreadable.add_column("Reason")
+    for row in _rows(
+        conn,
+        "SELECT rel_path, size_bytes, reason FROM photos WHERE kind = 'unreadable' LIMIT 40",
+    ):
+        unreadable.add_row(
+            str(row["rel_path"])[:70],
+            f"{row['size_bytes']:,}",
+            str(row["reason"])[:60],
+        )
+    console.print(unreadable)
+
+    formats = Table(title="Image formats among face candidates", header_style="bold")
+    formats.add_column("Format")
+    formats.add_column("Files", justify="right")
+    where, params = _candidate_filter()
+    for row in _rows(
+        conn,
+        f"SELECT COALESCE(image_format,'?') AS f, COUNT(*) AS n FROM photos "
+        f"WHERE {where} GROUP BY f ORDER BY n DESC",
+        params,
+    ):
+        formats.add_row(str(row["f"]), f"{row['n']:,}")
+    console.print(formats)
+
+    _print_top_folders(conn, console, where, params)
+
+
+def _print_top_folders(
+    conn: sqlite3.Connection,
+    console: Console,
+    where: str,
+    params: tuple[str, ...],
+    limit: int = 20,
+) -> None:
+    """Largest folders and how well dated they are.
+
+    A big folder with few dates is where an era goes missing from the histogram.
+    """
+    counts: dict[str, list[int]] = {}
+    for row in _rows(conn, f"SELECT rel_path, taken_at FROM photos WHERE {where}", params):
+        parts = Path(str(row["rel_path"])).parts
+        folder = str(Path(*parts[:-1])) if len(parts) > 1 else "."
+        entry = counts.setdefault(folder, [0, 0])
+        entry[0] += 1
+        if row["taken_at"] is not None:
+            entry[1] += 1
+
+    table = Table(title=f"Largest folders (top {limit})", header_style="bold")
+    table.add_column("Folder")
+    table.add_column("Files", justify="right")
+    table.add_column("Dated", justify="right")
+    table.add_column("Undated", justify="right")
+
+    for folder, (total, dated) in sorted(counts.items(), key=lambda kv: -kv[1][0])[:limit]:
+        undated = total - dated
+        marker = f"[red]{undated:,}[/red]" if undated > total / 2 else f"{undated:,}"
+        table.add_row(folder[:60], f"{total:,}", f"{dated:,}", marker)
+    console.print(table)
+
+
+def print_path_inspection(
+    conn: sqlite3.Connection, pattern: str, console: Console | None = None
+) -> None:
+    """Explain what happened to every file whose path contains ``pattern``.
+
+    Answers "where did my 2024 photos go?" with facts instead of inference.
+    """
+    console = console or Console()
+    like = f"%{pattern}%"
+
+    total = _rows(conn, "SELECT COUNT(*) AS n FROM photos WHERE rel_path LIKE ?", (like,))[0]["n"]
+    console.print(f"\n[bold]{total:,}[/bold] file(s) with a path containing [cyan]{pattern}[/cyan]")
+    if not total:
+        console.print("[yellow]Nothing matched. Try a shorter substring.[/yellow]")
+        return
+
+    kinds = Table(title="By kind", header_style="bold")
+    kinds.add_column("Kind")
+    kinds.add_column("Files", justify="right")
+    kinds.add_column("Duplicates", justify="right")
+    for row in _rows(
+        conn,
+        "SELECT kind, COUNT(*) AS n, SUM(duplicate_of IS NOT NULL) AS dup FROM photos "
+        "WHERE rel_path LIKE ? GROUP BY kind ORDER BY n DESC",
+        (like,),
+    ):
+        kinds.add_row(str(row["kind"]), f"{row['n']:,}", f"{row['dup'] or 0:,}")
+    console.print(kinds)
+
+    dates = Table(title="By year and date source", header_style="bold")
+    dates.add_column("Year")
+    dates.add_column("Source")
+    dates.add_column("Files", justify="right")
+    for row in _rows(
+        conn,
+        "SELECT COALESCE(substr(taken_at,1,4),'none') AS y, "
+        "COALESCE(taken_at_source,'none') AS src, COUNT(*) AS n FROM photos "
+        "WHERE rel_path LIKE ? GROUP BY y, src ORDER BY y, n DESC",
+        (like,),
+    ):
+        label = "[yellow]no date[/yellow]" if row["y"] == "none" else str(row["y"])
+        dates.add_row(label, str(row["src"]), f"{row['n']:,}")
+    console.print(dates)
+
+    samples = Table(title="Sample files", header_style="bold")
+    samples.add_column("Path")
+    samples.add_column("Kind")
+    samples.add_column("Date")
+    samples.add_column("Source")
+    samples.add_column("Size", justify="right")
+    for row in _rows(
+        conn,
+        "SELECT rel_path, kind, taken_at, taken_at_source, width, height FROM photos "
+        "WHERE rel_path LIKE ? LIMIT 12",
+        (like,),
+    ):
+        samples.add_row(
+            str(row["rel_path"])[-55:],
+            str(row["kind"]),
+            str(row["taken_at"] or "-")[:19],
+            str(row["taken_at_source"] or "-"),
+            f"{row['width'] or '?'}x{row['height'] or '?'}",
+        )
+    console.print(samples)

@@ -18,6 +18,124 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-06 — Correction: forwarded images are first-class; era gap explained
+
+**Phase:** 1  **Machine:** mac  **Status:** done
+
+### Corrected a planning error
+The plan said forwarded/messaging-app images should be kept out of the gold set except a token
+slice. **Wrong for this library.** WhatsApp is the *primary* channel through which family and event
+photos arrive here — 6,080 of 18,366 candidates (33%). They are now sampled into the gold set at
+their real share.
+
+The code was already correct: `FACE_CANDIDATE_KINDS = {photo, forwarded}`, so nothing was ever
+excluded from face detection. Only the plan was wrong.
+
+### New risk identified from the measured data
+
+| Kind | Files | Size | Average |
+|---|---|---|---|
+| `photo` | 13,345 | 29.8 GB | 2.2 MB |
+| `forwarded` | 6,080 | 2.8 GB | **0.46 MB** |
+
+Messaging apps recompress and downscale, so forwarded images are ~5x smaller, meaning **smaller
+faces in pixels**. Phase 3 quality gating on *absolute* face size would therefore reject them at a
+higher rate than camera originals and quietly delete the user's party photos from their people
+albums. Added to the risk register: report gating rate and `f1_by_slice` separately for
+`forwarded`, and switch to *relative* face size (fraction of image height) if the bias is real.
+
+### Investigated: "2024 shows 353 photos but a college folder has ~2,751"
+Not a report bug. The era table sums to 11,648 dated + 6,718 undated = 18,366, exactly the
+candidate count, so it is internally consistent. The 2024 photos were in the **undated** bucket
+because WhatsApp strips EXIF — and that report was produced *before* the date-recovery code existed.
+
+Verified by simulation: a folder of 30 undated `IMG-2024MMDD-WA####.jpg` files plus 5
+arbitrarily-named ones now resolves to **30 dated from filename, 5 dated from folder**, all 2024.
+Previously all 35 would have been undated.
+
+### Did
+- `--inspect SUBSTRING`: explains what happened to every file whose path matches — by kind, by
+  year and date source, with duplicate counts and sample rows. Turns "where did my photos go?"
+  into a fact rather than an inference.
+- Largest-folders table added to `--diagnose`, flagging folders that are majority-undated in red.
+
+### Next
+- Run backfill and `--inspect` on the real corpus to confirm 2024/2025 populate.
+- Identify the 282 unsupported files (3.4 GB).
+- Then `scripts/build_face_pool.py`.
+
+---
+
+## 2026-09-06 — First real corpus scan + date recovery
+
+**Phase:** 1  **Machine:** linux (scan) / mac (code)  **Status:** done
+
+### Measured — the real corpus
+
+Path: `/media/siddharth/Elements/B/Photos Timeline` (external USB drive).
+22,027 files, 62.3 GB, scanned in **12m13s at ~30 files/sec**.
+
+| Kind | Files | Size | Share |
+|---|---|---|---|
+| photo | 13,345 | 29.8 GB | 60.6% |
+| forwarded | 6,080 | 2.8 GB | 27.6% |
+| video | 1,321 | 25.8 GB | 6.0% |
+| screenshot | 989 | 0.5 GB | 4.5% |
+| unsupported | 282 | 3.4 GB | 1.3% |
+| unreadable | 9 | — | — |
+| tiny | 1 | — | — |
+
+- Duplicates: **1,215** (0.9 GB redundant), 5.5% — normal for periodic backups.
+- **Unique face candidates: 18,366.** Close to the 18k the plan assumed, so prior estimates hold.
+- Era span **2010–2025** with two clear peaks: 2016 (2,752) and 2022 (2,138).
+- **15+ camera models**: Xiaomi Redmi 3S/4/HM1S, realme narzo 20 / GT Neo2, Canon EOS 1500D,
+  Nokia 6233, Sony DSC-WX80, Samsung GT-P3100, Apple iPhone 13, Intex, YU, alps.
+
+### Observations that change planning
+- **Videos were 25.8 GB — 41% of all bytes — and were never read.** Extension-based rejection
+  paid for itself outright on the first run.
+- **Forwarded images are 27.6% of the library**, higher than assumed. Isolating them as their own
+  kind keeps thousands of stranger faces out of the gold set.
+- **Camera diversity is unusually wide**, from a 2006 Nokia feature phone to a DSLR. Image quality
+  variance will be large, which raises the importance of Phase 3 quality gating and makes the
+  gold set's quality strata easy to fill.
+- Two population peaks nine years apart is close to ideal for the **cross-era identity**
+  requirement, which is the hardest thing the gold set has to measure.
+- Corpus is on an **external USB drive**. Fine for a header-only scan; the Phase 1 detect pass will
+  read ~32 GB of pixel data from it, so I/O may matter there.
+
+### Problem found: 37% of candidates had no date
+6,718 undated vs 6,080 forwarded is not a coincidence — messaging apps strip EXIF. Without dates,
+era stratification and the Phase 4 time prior would run on 63% of the library.
+
+### Did
+- Added `taken_at_source` column (schema v2, with an additive migration on open).
+- `date_from_filename()` — recovers dates from `IMG-20230115-WA0001`, `IMG_20230115_143022`,
+  `PXL_20220704_101530123`, `photo_2021-12-25_18-45-01`, `Screenshot_2024-03-09-07-01-59`.
+  Validates plausibility, so `20161131` (November has 30 days) and `20180229` are both rejected.
+- `year_from_folder()` — coarse fallback for folders like `2016 Goa/`.
+- `backfill_dates()` — database-only, reads no files, idempotent, runs in seconds.
+- `--diagnose` flag: breaks down unsupported extensions, unreadable reasons, and image formats.
+- Report gained a **date provenance** table so the trustworthiness of every date is visible.
+- 21 new tests (42 total).
+
+### Decided
+- **mtime fallback is opt-in (`--use-mtime`), not default.** Copying a library resets modification
+  times; a wrong date is worse than no date because it feeds a false signal into the Phase 4 time
+  prior. Provenance is recorded either way so the decision stays measurable.
+- Priority is strictly **exif > filename > folder > mtime**, and EXIF is never overwritten.
+
+### Problems / surprises
+- A test caught the Pixel filename format: `PXL_20220704_101530123.jpg` appends milliseconds, so
+  the trailing `(?!\d)` in the time pattern rejected an otherwise valid match.
+
+### Next
+- Rerun the scan on Linux to populate dates, then `--diagnose` to identify the 282 unsupported
+  files (3.4 GB, ~12 MB average — too large to be junk; likely a video format not yet listed).
+- Then `scripts/build_face_pool.py`.
+
+---
+
 ## 2026-09-06 — Phase 1 step 1: corpus scanner
 
 **Phase:** 1  **Machine:** mac (written and tested here; runs on linux)  **Status:** done

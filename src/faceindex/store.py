@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Bumped when the scanner's classification or metadata extraction changes in a way that
 # invalidates previously stored rows.
@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS photos (
     image_format  TEXT,
 
     taken_at      TEXT,
+    -- Where taken_at came from: exif | filename | folder | mtime. NULL when unknown.
+    -- Provenance matters: mtime is unreliable on copied backups and must stay separable.
+    taken_at_source TEXT,
     camera_make   TEXT,
     camera_model  TEXT,
     orientation   INTEGER,
@@ -68,6 +71,16 @@ CREATE INDEX IF NOT EXISTS idx_photos_taken_at     ON photos(taken_at);
 CREATE INDEX IF NOT EXISTS idx_photos_duplicate_of ON photos(duplicate_of);
 """
 
+# Columns added after the first release, applied to existing databases on open.
+_MIGRATIONS: tuple[tuple[str, str], ...] = (("taken_at_source", "TEXT"),)
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(photos)")}
+    for column, column_type in _MIGRATIONS:
+        if column not in existing:
+            conn.execute(f"ALTER TABLE photos ADD COLUMN {column} {column_type}")
+
 
 def connect(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     """Open the index, creating and migrating the schema if needed."""
@@ -86,6 +99,7 @@ def connect(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(_SCHEMA)
+        _apply_migrations(conn)
         _set_meta(conn, "schema_version", str(SCHEMA_VERSION))
         conn.commit()
 

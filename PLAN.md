@@ -362,6 +362,7 @@ aggregate number is not.
 | Occlusion | ~15% |
 | Difficult lighting | ~20% backlit / low-light / mixed colour temperature |
 | Group photos (4+ faces) | ≥15% of faces |
+| **Forwarded (messaging-app) images** | **~33%, matching their real share of the corpus** |
 | Per-person-per-day cap | 2–3 faces |
 | Per-person total cap | ~60–80 faces |
 
@@ -379,9 +380,26 @@ The sampler must emit a **composition report** and assert against these targets,
 - Screenshots, documents, receipts, memes — not photographs
 - Burst frames beyond the per-person-per-day cap
 
-**Forwarded-image slice (messaging apps).** Real galleries contain thousands of forwarded images full of strangers,
-celebrities and memes. Exclude them from the main gold set, but keep a dedicated ~50-face slice to verify they land in
-`not_of_interest` and do not spawn phantom people. This is a genuine production failure mode.
+**Forwarded images (messaging apps) are first-class photos, not a marginal slice.**
+Measured on the real corpus: **6,080 of 18,366 face candidates (33%) arrive via WhatsApp**, and they
+contain genuine family and event photos — in this library messaging is the *primary* photo-sharing
+channel, not a source of memes. They are sampled into the gold set in proportion to their share.
+
+The reason they stay a distinct `kind` is quality, not exclusion:
+
+| Kind | Files | Size | Average |
+|---|---|---|---|
+| `photo` | 13,345 | 29.8 GB | 2.2 MB |
+| `forwarded` | 6,080 | 2.8 GB | **0.46 MB** |
+
+Messaging apps recompress and downscale, so forwarded images carry ~5x fewer bytes, hence smaller
+faces in pixels. **Phase 3 quality gating will therefore reject them at a higher rate than camera
+originals** — a systematic bias that would quietly delete the user's party photos from their people
+albums. Track `f1_by_slice` and the gating rate separately for `forwarded`, and if the gate is
+biased, gate on *relative* face size (fraction of image height) rather than absolute pixels.
+
+Still worth isolating: a subset of forwarded images genuinely are memes, celebrities and strangers.
+Those are handled by the `not_of_interest` label during labelling, not by discarding the whole class.
 
 **Deliverables**
 - [x] `scripts/scan_corpus.py` — dedup by content hash, classify and drop screenshots/documents/memes
@@ -791,7 +809,9 @@ celebrities and memes. Exclude them from the main gold set, but keep a dedicated
 | 16 | Document/meme detection | Not attempted | Needs a model to do reliably; they fall through as photos and simply yield no faces. A heuristic risks discarding real photos | 2026-09-06 | Junk faces become a measurable problem |
 | 17 | Messaging-app images | Classified as a distinct `forwarded` kind | Keeps thousands of stranger faces out of the main sample while enabling the dedicated forwarded-image slice | 2026-09-06 | |
 | 18 | Duplicate canonical copy | Oldest mtime, ties broken on path | Deterministic across runs and machines | 2026-09-06 | |
-| 19 | | | | | |
+| 19 | Forwarded/WhatsApp images | **First-class face candidates**, sampled into the gold set at their real 33% share | Measured: they are the primary channel for family and event photos in this library, not memes | 2026-09-06 | Corpus profile changes |
+| 20 | Date fallback order | exif > filename > folder year > mtime (mtime opt-in only) | Messaging apps strip EXIF but keep the date in the filename; mtime is destroyed by copying to a backup drive | 2026-09-06 | |
+| 21 | | | | | |
 
 ---
 
@@ -811,6 +831,7 @@ celebrities and memes. Exclude them from the main gold set, but keep a dedicated
 | Thresholds not re-tuned after model change | Medium | Make threshold sweep part of every model-change experiment |
 | Scope creep into a full photo manager | Medium | Non-goals are listed in §0; re-read them |
 | Kids / siblings / twins mis-cluster | Medium | Accept; rely on Phase 7 correction UX |
+| **Quality gating biased against low-resolution forwarded images** | High, silent | 33% of candidates are recompressed messaging images. Report gating rate and F1 separately for `forwarded`; gate on relative face size if absolute pixels prove biased |
 | Re-clustering destroys user labels | High | Confirmed labels are immutable anchors |
 
 ---

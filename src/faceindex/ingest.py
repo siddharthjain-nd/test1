@@ -44,6 +44,21 @@ _SCREENSHOT_NAME = re.compile(r"screen[\s_-]?shot|screenshot", re.IGNORECASE)
 # WhatsApp: IMG-20230115-WA0001.jpg / VID-...; Telegram: photo_2023-01-15_....jpg
 _FORWARDED_NAME = re.compile(r"-WA\d{4}|^photo_\d{4}-\d{2}-\d{2}|^IMG-\d{8}-WA", re.IGNORECASE)
 
+# Messaging apps strip EXIF but keep the date in the filename, which is where most of a
+# typical library's undated photos get their dates back from.
+# Matches IMG-20230115-WA0001, IMG_20230115_143022, PXL_20230115_..., 2023-01-15 14.30.22
+_DATE_IN_NAME = re.compile(
+    r"(?<!\d)(?P<y>19\d{2}|20\d{2})(?P<sep>[-_.]?)(?P<m>0[1-9]|1[0-2])(?P=sep)"
+    r"(?P<d>0[1-9]|[12]\d|3[01])(?!\d)"
+)
+_TIME_IN_NAME = re.compile(
+    # Trailing \d{0,3} absorbs the milliseconds Pixel appends: PXL_20220704_101530123.jpg
+    r"(?<!\d)(?P<H>[01]\d|2[0-3])(?P<sep>[-_.:]?)(?P<M>[0-5]\d)(?P=sep)(?P<S>[0-5]\d)\d{0,3}(?!\d)"
+)
+_YEAR_IN_FOLDER = re.compile(r"(?<!\d)(19[89]\d|20[0-4]\d)(?!\d)")
+
+EARLIEST_PLAUSIBLE_YEAR = 1990
+
 _EXIF_DATETIME_ORIGINAL = 36867
 _EXIF_DATETIME_DIGITIZED = 36868
 _EXIF_DATETIME = 306
@@ -102,6 +117,107 @@ class ScanStats:
 
     def record(self, kind: str) -> None:
         self.by_kind[kind] = self.by_kind.get(kind, 0) + 1
+
+
+class DateSource:
+    EXIF = "exif"
+    FILENAME = "filename"
+    FOLDER = "folder"
+    MTIME = "mtime"
+
+
+def _plausible(year: int) -> bool:
+    return EARLIEST_PLAUSIBLE_YEAR <= year <= datetime.now(UTC).year + 1
+
+
+def date_from_filename(name: str) -> str | None:
+    """Recover a capture date from a camera or messaging-app filename.
+
+    Returns an ISO-8601 string, or None when the name carries no plausible date.
+    """
+    match = _DATE_IN_NAME.search(name)
+    if match is None:
+        return None
+
+    year, month, day = int(match["y"]), int(match["m"]), int(match["d"])
+    if not _plausible(year):
+        return None
+
+    hour = minute = second = 0
+    time_match = _TIME_IN_NAME.search(name, match.end())
+    if time_match is not None:
+        hour, minute, second = (
+            int(time_match["H"]),
+            int(time_match["M"]),
+            int(time_match["S"]),
+        )
+
+    try:
+        return datetime(year, month, day, hour, minute, second).isoformat()
+    except ValueError:
+        return None
+
+
+def year_from_folder(rel_path: str) -> str | None:
+    """Fall back to a year named in a parent folder, e.g. ``2016 Goa/``.
+
+    Only a year is claimed, so the result is deliberately coarse: January 1st.
+    """
+    for part in reversed(Path(rel_path).parts[:-1]):
+        match = _YEAR_IN_FOLDER.search(part)
+        if match and _plausible(int(match[1])):
+            return datetime(int(match[1]), 1, 1).isoformat()
+    return None
+
+
+def backfill_dates(conn: sqlite3.Connection, *, use_mtime: bool = False) -> dict[str, int]:
+    """Fill missing ``taken_at`` from filename, then folder, then optionally mtime.
+
+    Database-only: reads no files, so this is fast and safe to rerun. EXIF-derived dates are
+    never overwritten.
+
+    ``use_mtime`` is off by default because copying a library resets modification times, and
+    a wrong date is worse than no date -- it would feed a false signal into the Phase 4 time
+    prior. ``taken_at_source`` records provenance either way so the choice stays measurable.
+    """
+    conn.execute(
+        "UPDATE photos SET taken_at_source = ? WHERE taken_at IS NOT NULL "
+        "AND taken_at_source IS NULL",
+        (DateSource.EXIF,),
+    )
+
+    counts = {DateSource.FILENAME: 0, DateSource.FOLDER: 0, DateSource.MTIME: 0}
+    rows = conn.execute(
+        "SELECT id, rel_path, mtime FROM photos WHERE taken_at IS NULL AND kind NOT IN (?, ?)",
+        (Kind.UNREADABLE, Kind.UNSUPPORTED),
+    ).fetchall()
+
+    for row in rows:
+        rel_path = str(row["rel_path"])
+        resolved = date_from_filename(Path(rel_path).name)
+        source = DateSource.FILENAME
+
+        if resolved is None:
+            resolved = year_from_folder(rel_path)
+            source = DateSource.FOLDER
+
+        if resolved is None and use_mtime and row["mtime"]:
+            candidate = datetime.fromtimestamp(float(row["mtime"]), tz=UTC)
+            if _plausible(candidate.year):
+                resolved = candidate.replace(tzinfo=None).isoformat()
+                source = DateSource.MTIME
+
+        if resolved is None:
+            continue
+
+        conn.execute(
+            "UPDATE photos SET taken_at = ?, taken_at_source = ? WHERE id = ?",
+            (resolved, source, row["id"]),
+        )
+        counts[source] += 1
+
+    conn.commit()
+    return counts
 
 
 def iter_files(root: Path, *, follow_symlinks: bool = False) -> Iterator[Path]:
@@ -352,7 +468,8 @@ def _insert(conn: sqlite3.Connection, record: PhotoRecord, scanned_at: str) -> N
             camera_make=excluded.camera_make, camera_model=excluded.camera_model,
             orientation=excluded.orientation, gps_lat=excluded.gps_lat,
             gps_lon=excluded.gps_lon, scanned_at=excluded.scanned_at,
-            scan_version=excluded.scan_version, content_hash=NULL, duplicate_of=NULL
+            scan_version=excluded.scan_version, content_hash=NULL, duplicate_of=NULL,
+            taken_at_source=NULL
         """,
         (
             str(record.path),
