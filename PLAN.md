@@ -411,7 +411,7 @@ photos, that is a finding, not a bug to hide.
 
 **Deliverables**
 - [x] `scripts/scan_corpus.py` — dedup by content hash, classify and drop screenshots/documents/memes
-- [ ] `scripts/build_face_pool.py` — detect + align over the **entire** corpus, auto-derive per-face attributes
+- [x] `scripts/build_face_pool.py` — detect + align over the **entire** corpus, auto-derive per-face attributes
 - [ ] `scripts/sample_gold_set.py` — stratified sampler + **composition report asserting the targets above**
 - [ ] Keyboard-driven grid labelling tool (accept-cluster / pull-out / four label keys); must also surface the noise bucket
 - [ ] `data/gold/labels.csv` with **~1,800 labelled faces across 25–35 identities**
@@ -819,7 +819,10 @@ photos, that is a finding, not a bug to hide.
 | 18 | Duplicate canonical copy | Oldest mtime, ties broken on path | Deterministic across runs and machines | 2026-09-06 | |
 | 19 | Forwarded/WhatsApp images | **First-class face candidates**, sampled into the gold set at their real 33% share | Measured: they are the primary channel for family and event photos in this library, not memes | 2026-09-06 | Corpus profile changes |
 | 20 | Date fallback order | exif_original > exif_digitized > filename > exif_modified (tag 306) > folder year > mtime (opt-in) | Tag 306 is a *modification* time: bulk edits and copies rewrite it, producing dozens of unrelated photos sharing a timestamp to the second. Camera and messaging filenames are more reliable | 2026-09-06 | Measured disagreement rate says otherwise |
-| 21 | | | | | |
+| 21 | Face pool detector | **SCRFD-10G at 640px**, not 500M | Detection is the only stage needing the originals, so a missed face is permanently absent from the gold set. Embedding can be redone from crops for free. 15 mAP points on hard faces | 2026-09-06 | Never for the pool build |
+| 22 | Detector input size | 640, not 1024 | Measured on a real 6-face photo: 1024 found the *same* faces with *lower* scores at 2.2× the cost | 2026-09-06 | Small-face recall proves inadequate |
+| 23 | Test assets | Sample photograph downloaded to gitignored `data/test_assets/` | Detection cannot be tested on synthetic images, and committing photos of real people to a public repo is unacceptable | 2026-09-06 | |
+| 24 | | | | | |
 
 ---
 
@@ -872,8 +875,8 @@ introduces them. Two things that are constantly conflated and are *not* the same
 | C1 | MobileFaceNet instead of ResNet100 | Phase 11 (mobile) | 13 MB vs 250 MB; latency | UNMEASURED — expect large (~19 pts MR-All in vendor tables) | **MOBILE ONLY.** Server never uses it. |
 | C2 | Model int8 quantisation | Phase 11 (mobile) | size + speed on ARM | UNMEASURED | MOBILE ONLY; must report gold-set delta vs fp32 |
 | C3 | Embedding storage int8 | Phase 6 | 4× storage | UNMEASURED; expected ~0 | Accept only after measuring |
-| C4 | Decode at 1280px, not full res | Phase 2 | 4–8× faster decode | UNMEASURED — costs small-face recall | Temporary; Phase 5 reverts to full res on server |
-| C5 | SCRFD-500M instead of 10G | Phase 2 | speed during bootstrap | ~68.5 vs ~83.1 WIDER-hard (vendor) | Temporary; server upgrades in Phase 5 |
+| C4 | Decode at 1280px, not full res | Phase 2 | 4–8× faster decode | Raised to **2048px** for the face pool; costs little because `draft()` scales by powers of two | **Superseded.** Face pool decodes at 2048px |
+| C5 | SCRFD-500M instead of 10G | Phase 2 | speed during bootstrap | ~68.5 vs ~83.1 WIDER-hard (vendor) | **Withdrawn.** Face pool uses det_10g: detection needs the originals, so a miss here is permanent |
 | C6 | MobileFaceNet for gold-set bootstrap | Phase 1 | 15 min vs hours | Not a product compromise — labels are human-verified | Accept; mild pre-grouping bias only |
 | C7 | Quality gating drops faces | Phase 3 | precision | Deliberate precision/recall trade; the sweep finds the knee | Accept with published curve |
 | C8 | Flip-TTA disabled | Phase 2–4 | 2× speed | UNMEASURED, expected small | Re-evaluate in Phase 5 |

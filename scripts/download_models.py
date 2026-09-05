@@ -96,6 +96,39 @@ LICENCE_NOTICE = """
 ------------------------------------------------------------------------------
 """
 
+# A real multi-face photograph. Detection and alignment cannot be tested against
+# synthetic images, and committing a photo of real people to a public repository is not
+# acceptable, so it is fetched into the gitignored data directory instead.
+TEST_ASSET_URL = (
+    "https://raw.githubusercontent.com/deepinsight/insightface/master/"
+    "python-package/insightface/data/images/t1.jpg"
+)
+
+
+def fetch_test_asset(checksums: dict[str, str]) -> bool:
+    """Download the sample photograph used by the detection tests."""
+    destination = paths.sample_faces_photo()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    if not destination.exists():
+        print(f"\n[test asset] downloading {destination.name}")
+        download(TEST_ASSET_URL, destination)
+
+    digest = sha256_of(destination)
+    key = f"test_assets/{destination.name}"
+    recorded = checksums.get(key)
+    if recorded is None:
+        checksums[key] = digest
+        state = "recorded"
+    elif recorded != digest:
+        print(f"  CHECKSUM MISMATCH  {destination.name}")
+        return False
+    else:
+        state = "verified"
+
+    print(f"[test asset] {state} {destination.name} ({destination.stat().st_size / 1e3:.0f} KB)")
+    return True
+
 
 def sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
@@ -262,6 +295,11 @@ def main() -> int:
         action="store_true",
         help="Check existing files without any network access.",
     )
+    parser.add_argument(
+        "--skip-test-asset",
+        action="store_true",
+        help="Do not fetch the sample photograph used by the detection tests.",
+    )
     args = parser.parse_args()
 
     selected = [p for p in MODEL_PACKS if not args.packs or p.key in args.packs]
@@ -282,6 +320,9 @@ def main() -> int:
         )
         total_ok += ok
         total_failed += failed
+
+    if not args.skip_test_asset and not args.verify_only and not fetch_test_asset(checksums):
+        total_failed += 1
 
     save_lock(lock_path, checksums)
 

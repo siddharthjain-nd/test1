@@ -48,6 +48,16 @@ def gold_dir() -> Path:
     return data_dir() / "gold"
 
 
+def test_assets_dir() -> Path:
+    """Fixtures that cannot be generated, such as a real photograph containing faces."""
+    return data_dir() / "test_assets"
+
+
+def sample_faces_photo() -> Path:
+    """Multi-face photograph used by detection and alignment tests."""
+    return test_assets_dir() / "faces_sample.jpg"
+
+
 def results_dir() -> Path:
     """One row per experiment run."""
     return data_dir() / "results"
@@ -71,5 +81,6 @@ def ensure_dirs() -> None:
         context_crops_dir(),
         gold_dir(),
         results_dir(),
+        test_assets_dir(),
     ):
         path.mkdir(parents=True, exist_ok=True)

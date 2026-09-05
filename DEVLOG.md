@@ -18,6 +18,82 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-06 — Face pool builder (detect + align)
+
+**Phase:** 1  **Machine:** mac  **Status:** done, ready to run on the corpus
+
+### Scan verdict: ready
+The tag-306 fix is confirmed working. 116 photos moved off untrustworthy modification
+timestamps onto filename dates, and the spurious **2002** entry vanished from the era
+histogram — exactly the bug being hunted. `audio` split out cleanly: unsupported 282 → 45.
+
+Final corpus: **18,366 candidates, 94.8% dated, era 2007–2025** with peaks at 2016 and 2022,
+15+ camera models. Good enough to proceed.
+
+Decided without asking, per the user's request to handle minor calls directly: **skipping the
+54 MB zip.** It is roughly 50 photos in a farewell folder; for validation data that is noise.
+
+### The decision that matters: SCRFD-10G, not 500M
+
+Detection is the **only** stage that needs the original photos. Embedding works from the saved
+112x112 crops forever after. So:
+
+- A face the detector misses now is permanently absent from the gold set.
+- An embedding choice made now can be revised on the Mac for free.
+
+Therefore quality goes into detection, speed into embedding.
+
+| Detector | WIDER-hard mAP | Measured on M2 |
+|---|---|---|
+| SCRFD-500M @640 | 68.5 | 38 ms/photo |
+| **SCRFD-10G @640** | **83.1** | **124 ms/photo** |
+| SCRFD-10G @1024 | — | 260 ms/photo |
+
+Register entries **C4 and C5 are withdrawn**, not deferred. Decode cap raised 1280 → 2048px,
+which costs almost nothing because `draft()` scales by powers of two.
+
+**1024px input rejected on evidence:** on a real 6-face photo it found the *same six faces*
+with *lower* confidence (0.78–0.89 vs 0.87–0.92) at 2.2x the cost.
+
+Estimated corpus runtime: **~30–45 min on the M2, ~2–3 h on the i3.** Resumable, unattended.
+
+### Verified against a real photograph, not synthetic data
+- Both detectors find the same 6 faces with sensible boxes, and yaw values that match the
+  image (one face at -88 degrees is genuinely in profile).
+- Umeyama similarity transform inverts a known rotate/scale/translate to 1e-3, and is proven
+  shear-free (`M @ M.T` is a multiple of the identity — affine would not be).
+- Aligned crop inspected visually: correctly centred at 112x112.
+- Residual on a real face is ~9.6 px max across 5 landmarks. Expected: the ArcFace template is
+  an *average* face, so individual proportions differ even when perfectly frontal.
+- Decode is only ~4 ms at 2048px thanks to `draft()`; the model dominates, as predicted.
+
+### Did
+- `detect.py` — SCRFD ONNX wrapper. Nine outputs decoded as 3 strides x (score, bbox-distance,
+  keypoint-distance), 2 anchors per cell, letterboxed top-left as the model was trained.
+- `align.py` — Umeyama similarity warp to the ArcFace template, context crops for human
+  labelling, and auto-derived attributes (inter-ocular size, yaw/roll, blur, exposure).
+- `facepool.py` + `scripts/build_face_pool.py` — parallel, resumable, streaming.
+- `faces` and `photo_pool_status` tables.
+- 17 new tests (60 total), including end-to-end runs on a real multi-face photo.
+
+### Problems / surprises
+- **A `multi_replace` edit silently deleted the `--packs` argument** from
+  `download_models.py`. Caught by diffing before committing. Worth repeating: verify edits by
+  their effect, not by the tool reporting success.
+- Face-pool tests originally depended on a file in `/tmp`, so they would have **silently
+  skipped** on Linux — the worst kind of test failure. The sample photograph is now a managed,
+  checksummed asset in gitignored `data/test_assets/`, fetched by `download_models.py`.
+  Detection genuinely cannot be tested on synthetic images, and committing photos of real
+  people to a public repository is not acceptable.
+- ONNX Runtime emits shape warnings at non-640 input sizes; the models carry static output
+  shapes baked for 640x640. Values are still correct, but it is another reason to stay at 640.
+
+### Next
+- Run the pool on the corpus, record faces/photo and the size and pose distributions.
+- Then embeddings, bootstrap clustering, and the labelling UI.
+
+---
+
 ## 2026-09-06 — Date recovery validated; EXIF tag 306 demoted
 
 **Phase:** 1  **Machine:** linux (data) / mac (code)  **Status:** done

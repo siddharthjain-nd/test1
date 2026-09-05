@@ -73,6 +73,57 @@ CREATE INDEX IF NOT EXISTS idx_photos_content_hash ON photos(content_hash);
 CREATE INDEX IF NOT EXISTS idx_photos_kind         ON photos(kind);
 CREATE INDEX IF NOT EXISTS idx_photos_taken_at     ON photos(taken_at);
 CREATE INDEX IF NOT EXISTS idx_photos_duplicate_of ON photos(duplicate_of);
+
+CREATE TABLE IF NOT EXISTS faces (
+    id             INTEGER PRIMARY KEY,
+    photo_id       INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+
+    -- Stable within a photo: index 0 is the largest face. Lets a crop be relocated
+    -- without depending on row ids surviving a reindex.
+    face_index     INTEGER NOT NULL,
+
+    bbox_x1        REAL NOT NULL,
+    bbox_y1        REAL NOT NULL,
+    bbox_x2        REAL NOT NULL,
+    bbox_y2        REAL NOT NULL,
+    landmarks      TEXT NOT NULL,   -- JSON [[x,y] x 5], in decoded-image coordinates
+    det_score      REAL NOT NULL,
+
+    -- Auto-derived attributes. Present so errors can be sliced by pose, size, quality.
+    interocular_px REAL,
+    relative_size  REAL,
+    yaw_deg        REAL,
+    roll_deg       REAL,
+    blur           REAL,
+    brightness     REAL,
+    dark_fraction  REAL,
+    bright_fraction REAL,
+
+    -- Scale from the decoded image back to the original file, so face sizes stay
+    -- comparable across photos decoded at different resolutions.
+    decode_scale   REAL NOT NULL,
+
+    crop_path      TEXT,
+    context_path   TEXT,
+
+    detector       TEXT NOT NULL,
+    pool_version   TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+
+    UNIQUE(photo_id, face_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_faces_photo   ON faces(photo_id);
+CREATE INDEX IF NOT EXISTS idx_faces_size    ON faces(interocular_px);
+CREATE INDEX IF NOT EXISTS idx_faces_version ON faces(pool_version);
+
+CREATE TABLE IF NOT EXISTS photo_pool_status (
+    photo_id     INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+    pool_version TEXT NOT NULL,
+    n_faces      INTEGER NOT NULL,
+    error        TEXT,
+    processed_at TEXT NOT NULL
+);
 """
 
 # Columns added after the first release, applied to existing databases on open.
