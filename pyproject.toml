@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faceindex"
+version = "0.0.1"
+description = "Offline, privacy-preserving face grouping for personal photo libraries"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "AGPL-3.0-or-later" }
+
+# Version ranges are deliberately narrow. Exact resolved versions live in
+# requirements.lock.txt and must be identical on the Mac and the Linux box,
+# otherwise embeddings drift between machines (PLAN.md §3).
+dependencies = [
+    "numpy>=1.26,<2.3",
+    "onnxruntime>=1.20,<1.23",
+    "opencv-python-headless>=4.10,<4.13",
+    "pillow>=10.4,<12",
+    "pillow-heif>=0.18,<1.1",
+    "scikit-learn>=1.5,<1.8",
+    "scipy>=1.13,<1.17",
+    "pandas>=2.2,<2.4",
+    "pyyaml>=6.0,<7",
+    "pydantic>=2.8,<3",
+    "typer>=0.12,<0.20",
+    "rich>=13.7,<15",
+    "tqdm>=4.66,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "ruff>=0.6,<0.14",
+    "mypy>=1.11,<2",
+    "types-PyYAML",
+    "types-tqdm",
+]
+
+[project.scripts]
+faceindex = "faceindex.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "PTH", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["faceindex"]
+mypy_path = "src"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["cv2.*", "onnxruntime.*", "pillow_heif.*", "sklearn.*", "scipy.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

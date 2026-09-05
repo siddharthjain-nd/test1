@@ -1,0 +1,79 @@
+# Baseline configuration.
+#
+# Every tunable lives in a config file, never in code (PLAN.md section 3).
+# Copy this to configs/experiments/<name>.yaml and change one thing at a time.
+#
+# Values marked TODO are set in the phase that introduces them. Nothing here is
+# active yet - Phase 0 only establishes the file.
+
+pipeline_version: "0.0.1"
+
+corpus:
+  # Absolute path to the photo library. Differs per machine, so override with the
+  # FACEINDEX_CORPUS environment variable rather than committing a local path.
+  root: null
+  follow_symlinks: false
+  # Extensions considered photographs. Videos are out of scope.
+  include_extensions: [".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff"]
+
+ingest:
+  # Cheap identity check before hashing whole files: (size, first 64KB, last 64KB).
+  quick_hash_bytes: 65536
+  # Full SHA-256 only when a quick hash collides.
+  verify_collisions_with_sha256: true
+  # Discard obvious non-photographs before paying for a decode.
+  drop_screenshots: true
+  drop_below_pixels: 10000
+
+decode:
+  # Quality Compromise Register C4. JPEG DCT-domain downscaling via Image.draft().
+  # Bounded decode for the Phase 1 bootstrap only; Phase 5 reverts the server path
+  # to full resolution. Do not raise this cap silently.
+  max_long_edge: 1280
+  honour_exif_orientation: true
+
+detect:
+  model: "buffalo_sc/det_500m.onnx"   # Register C5; buffalo_l/det_10g.onnx from Phase 5
+  input_size: [640, 640]
+  score_threshold: 0.5
+  nms_threshold: 0.4
+
+align:
+  output_size: 112
+  # Wider crop kept alongside the aligned one, for human labelling only.
+  context_scale: 2.0
+  context_size: 256
+
+embed:
+  model: "buffalo_sc/w600k_mbf.onnx"  # Register C6; upgraded in Phase 5
+  input_size: 112
+  # ArcFace preprocessing. NOT x/255 - getting this wrong silently degrades everything.
+  mean: 127.5
+  scale: 127.5
+  input_layout: "NCHW"
+  channel_order: "RGB"
+  l2_normalise: true
+  flip_tta: false                     # Register C8
+
+quality:
+  # Phase 3 sets real values. Nothing is gated in the baseline.
+  enabled: false
+  min_interocular_px: null
+  max_blur: null
+  max_abs_yaw_deg: null
+  min_det_score: null
+
+cluster:
+  algorithm: "hdbscan"
+  metric: "cosine"
+  min_cluster_size: 3
+  min_samples: null
+  # Phase 4 additions.
+  cannot_link_same_photo: false
+  time_prior: false
+
+runtime:
+  execution_provider: "CPUExecutionProvider"  # never CoreML/CUDA for stored embeddings
+  intra_op_num_threads: 4
+  decode_workers: 4
+  random_seed: 20260906

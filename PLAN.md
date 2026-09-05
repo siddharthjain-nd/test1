@@ -24,6 +24,10 @@ An open-source, privacy-preserving photo library organiser that groups photos by
 3. **The user is part of the algorithm.** Correction UX beats a 2% model gain.
 4. **Boring tech.** Postgres, SQLite, ONNX. No distributed systems for a personal app.
 5. **Reproducible.** Every experiment is a config file + a row in a results table.
+6. **Quality compromises are explicit and measured.** Any change trading accuracy for speed, size, or memory is
+   logged in the **Quality Compromise Register (§9)** with a *measured* cost. Never "probably fine".
+   The desktop path is the quality reference and takes no shortcuts; the phone is a constrained port whose gap
+   is measured against that reference.
 
 ### Hard constraints
 - InsightFace model weights are **non-commercial research use only**
@@ -49,8 +53,8 @@ Consequences of being a *clustering* system:
 
 | Phase | Name | Track | Status |
 |---|---|---|---|
-| 0 | Foundations & decisions | Core | ☐ Not started |
-| 1 | Gold set + evaluation harness | Core | ☐ Not started |
+| 0 | Foundations & decisions | Core | ☑ **Done** (2026-09-06) |
+| 1 | Gold set + evaluation harness | Core | ▶ **In progress** |
 | 2 | Baseline pipeline | Core | ☐ Not started |
 | 3 | Quality gating | Core | ☐ Not started |
 | 4 | Constrained clustering | Core | ☐ Not started |
@@ -147,6 +151,73 @@ Consequences of being a *clustering* system:
 - [ ] Decode workers (CPU) must be decoupled from inference (GPU) via a queue.
 - [ ] Every stage records wall-time into the results row.
 
+### Hardware inventory & workload placement
+
+| Machine | Role |
+|---|---|
+| **Linux i3-11th gen, 8 GB** | Primary indexing box — photos live here. Runs corpus scan, detect/align, bootstrap embedding, clustering, labelling UI. |
+| **Mac M2 Air** | Optional accelerator (~5× faster) *if* the photo folder can be mounted. Not worth copying tens of GB for a one-time job. |
+| **Kaggle** | **Phase 10 only** (distillation, anonymised 112×112 crops). Never for corpus processing: privacy-hostile, upload-bound, and the workload is decode-bound so a GPU idles. |
+| **Android phone** | Photo *source* now (adb/Syncthing); compute target only from Phase 11. |
+
+**Dev/run topology.**
+
+Code is written on the Mac and synced through GitHub. The photos live on Linux, so Linux does the one-time
+heavy pass over originals. The Mac does all the repeated experiment work.
+
+| Step | Machine | Notes |
+|---|---|---|
+| Write code | Mac | synced via GitHub |
+| Scan, dedup, detect, align, label gold set | Linux | photos are here; run once |
+| Transfer derived data (~1 GB) | private drive / USB / Syncthing | one time |
+| All experiments (embedders, thresholds, clustering, eval) | Mac | minutes per run |
+| GPU training | Kaggle | Phase 10 only; likely never needed |
+
+**Two distinct artifacts — both must be transferred:**
+
+| Artifact | What it is | Size |
+|---|---|---|
+| **Face pool** | *Every* detected face crop in the library (~30k), unlabelled | ~800 MB |
+| **Gold set** | The ~1,800 of those that carry human labels (just a CSV) | ~200 KB |
+
+**Experiments cluster the full pool and score only the labelled subset.** Clustering just the 1,800 labelled
+faces would be artificially easy — fewer distractors means fewer chances to confuse similar-looking people, so
+the score would be inflated and meaningless. The distractor population is part of the problem being measured.
+
+Original photos (~70 GB) are **not** transferred; the experiment loop never touches them.
+
+**Exception:** Phase 5 swaps the detector, which must re-read originals to find faces. Decide before Phase 5
+whether that pass runs on Linux or the library moves to an external SSD usable from either machine.
+
+Indicative M2 cost for ~30k faces: MobileFaceNet ~4 min · ResNet50 ~25 min · ResNet100 ~1 h · clustering and
+threshold sweeps seconds each. CPU is sufficient for the entire Core track.
+
+### Cross-platform correctness (arm64 Mac ↔ x86_64 Linux)
+- [ ] Pin exact ONNX Runtime / Pillow / NumPy versions; identical on both machines.
+- [ ] **CPU execution provider only** for anything that produces *stored* embeddings. CoreML/GPU for exploration only — they will not produce bit-identical results.
+- [ ] Use plain Pillow on both sides (`pillow-simd` does not build cleanly on ARM); differing JPEG decoders change pixels, which changes embeddings.
+- [ ] Parity test in CI: 5 fixed crops → embeddings agree within 1e-4 cosine across both machines.
+- [ ] Store `platform` + `onnxruntime_version` alongside `model_version` on every embedding row.
+
+### Repository hygiene
+- [ ] **Never commit `data/`.** Face crops and embeddings are biometric data; in a repo intended to be public this is an irreversible leak. Do not use git-lfs either — sync `data/` out-of-band via rsync/Syncthing.
+- [ ] **Never commit `models/`.** The InsightFace licence forbids redistribution.
+- [ ] Code and configs in git; data and weights never.
+
+Indicative one-time cost for ~18k photos / ~30k faces on the i3: scan 3–8 min · **detect+align 45–90 min** ·
+bootstrap embed 8–15 min · cluster <2 min. Human labelling is the real bottleneck (~300–600 keystrokes),
+not the CPU. Measure and replace these numbers once real.
+
+### Low-resource engineering rules (8 GB laptop is the target)
+- [ ] **`Image.draft("RGB", (1280,1280))` before decode** — JPEG DCT-domain downscaling, typically 4–8× faster. Largest single win.
+- [ ] **Quick-hash** `(filesize, first 64KB, last 64KB)`; full SHA-256 only on collision. Avoids reading the whole library.
+- [ ] **Filter before decoding** — extension, dimensions, aspect ratio (screenshots match screen resolution exactly).
+- [ ] **Stream, never accumulate.** Photo → crops to disk → attributes to SQLite → free. Peak RSS target < 1.5 GB.
+- [ ] **Resumable by design.** Per-photo done-marker in SQLite; sleep/OOM/crash must not restart the job.
+- [ ] Process pool = `min(physical_cores, 4)`, `nice`d. Oversubscription causes thrashing and thermal throttling, not speed.
+- [ ] Set `intra_op_num_threads` explicitly in ONNX Runtime.
+- [ ] Save **both** the tight 112×112 aligned crop (pipeline) and a wider ~256px context crop (human labelling) — a bare aligned face is often too tight for a person to judge.
+
 ---
 
 ## 4. Phases
@@ -159,11 +230,13 @@ Consequences of being a *clustering* system:
 **Goal:** Nothing runs yet; make the decisions that are expensive to reverse.
 
 **Deliverables**
-- [ ] Repo initialised, AGPL-3.0 LICENSE, README stub
-- [ ] `pyproject.toml` with pinned deps (onnxruntime, numpy, opencv, pillow-simd, scikit-learn, hdbscan, pydantic, typer)
-- [ ] `scripts/download_models.py` fetching SCRFD + MobileFaceNet + R50/R100 ONNX
-- [ ] Decision Log table filled in (§6)
-- [ ] Choose the photo corpus you will develop against (a real, messy, personal folder)
+- [x] Repo initialised, AGPL-3.0 LICENSE, README stub
+- [x] `pyproject.toml` with pinned deps + `requirements.lock.txt` frozen from a verified install
+- [x] `scripts/download_models.py` fetching SCRFD-500M/10G + MobileFaceNet + ResNet50 ONNX
+- [x] `conda` env `fca` on Python 3.11
+- [x] `DEVLOG.md` append-only work log
+- [x] Decision Log table filled in (§6)
+- [x] Choose the photo corpus you will develop against (a real, messy, personal folder)
 
 **Key considerations**
 - Pin ONNX opset and runtime version — silent numerical drift across versions is real.
@@ -171,9 +244,15 @@ Consequences of being a *clustering* system:
   Minimum: `photo_id, bbox, landmarks[5], det_score, quality_score, embedding, model_version, taken_at, gps`.
 - Include `model_version` and `pipeline_version` on every face row. You will re-run with new models and need to compare.
 - Choose SQLite for Phases 1–5 (single file, trivially resettable), migrate to Postgres in Phase 6.
+- Use plain `Pillow`, **not** `pillow-simd` — it does not build on arm64, and differing JPEG decoders between
+  machines would silently change pixels and therefore embeddings.
+- Use `scikit-learn`'s built-in `HDBSCAN`, not the standalone `hdbscan` package — avoids a fragile C-extension build.
 
 **Exit criteria**
-- `python scripts/download_models.py` works, models land in `models/`, checksums verified.
+- [x] `python scripts/download_models.py` works, models land in `models/`, checksums recorded and re-verifiable.
+- [x] `models.lock.json` committed; `--verify-only` passes offline.
+- [x] `ruff`, `mypy`, `pytest` all green.
+- [x] Git hygiene proven: no `.onnx` and no `data/` file can be staged.
 
 **Risks**
 - Model download links rot (Google Drive links in the InsightFace zoo are notorious). Mirror what you download and record checksums.
@@ -192,10 +271,124 @@ Consequences of being a *clustering* system:
 - Public benchmarks (LFW, IJB-C) cannot substitute: they measure *verification on celebrity photos*, not *clustering on your library*. A model can score 99.8% on LFW and still merge two of your relatives. Crucially, the **clustering threshold is library-specific** and can only be chosen against your own data.
 - Hard cases are included so that regressions are *detectable*, not so the model can *learn* them. A gold set of easy frontal portraits scores ~0.98 on everything and teaches you nothing.
 
+**Corpus selection & sampling**
+
+Use the **entire library** as the corpus, not an old backup subset. Sampling only from an older era structurally
+removes the system's worst failure mode (cross-age drift) from the test set, and also hides camera/phone changes
+and any people who appeared recently.
+
+- **Deliberately include identities that appear in both the oldest and newest eras.** Cross-era pairs are the
+  highest-value faces in the gold set — they are what actually breaks clustering.
+- **Dedup by content hash first.** Periodic backups guarantee exact duplicates.
+- **Beware burst/near-duplicate inflation.** Pairwise metrics count pairs, so 20 near-identical burst frames of one
+  person contribute 190 trivially-easy pairs while 5 photos of someone across 5 years contribute 10 hard ones. The
+  easy pairs drown the signal and F1 looks great while the system is bad.
+- Likewise, one person with 500 faces contributes ~125,000 pairs and dominates the metric entirely. This is
+  precisely why BCubed is tracked alongside pairwise.
+
+Stratified sampling targets (~1,500–2,000 faces, ~25–35 identities):
+
+| Stratum | Target |
+|---|---|
+| Era coverage | ≥35% oldest era, ≥35% most recent ~2 years, rest spread between |
+| **Cross-era identities** | ≥10 people present in both eras |
+| Quality mix | ~60% good, ~25% marginal, ~15% bad — include bad faces on purpose |
+| Frequency mix | Frequent people **and** people appearing in <10 photos |
+| Group shots | ≥15% of faces from photos containing 4+ faces |
+| Per-person-per-day cap | 2–3 faces |
+| Per-person total cap | ~60–80 faces |
+| Detector false positives | A handful, labelled as non-face |
+| Strangers | Labelled `not_of_interest`; the clusterer must be allowed to call them noise |
+
+**Folder structure is not ground truth.** Event/date/trip folders are *session priors* for Phase 4 (weak must-link,
+better time grouping) — pipeline input, never evaluation labels. Even genuinely per-person folders must be verified
+by eye before use; inherited labelling errors in a gold set are undetectable later and poison every downstream result.
+
+**Labelling workflow — the library is never browsed by hand**
+
+Selection is automated; the human only confirms. Steps 1–4 are scripts, step 5 is the only manual work.
+
+1. `scan` — dedup by content hash, drop screenshots / documents / memes
+2. `detect` + `align` over the **entire** corpus → face-crop pool (no labels)
+3. auto-derive per-face attributes (below)
+4. rough clustering + stratified sampler → ~2,000 candidate crops, pre-grouped
+5. grid UI: accept a clean cluster with one key, pull out the few wrong faces, judge the leftovers individually
+
+This turns ~2,000 faces into a few hundred keystrokes. **The noise/rejected bucket must be reviewed too** — reviewing
+only the confident clusters produces a gold set containing exactly the faces the baseline already finds easy.
+
+Two prerequisites for step 1:
+- **Consolidate the corpus onto one machine first** (`adb pull` or Syncthing from the phone). Overlap between phone
+  and backup is expected — hash dedup exists precisely for that. Install `pillow-heif` or newer-camera HEIF files
+  are silently skipped.
+- **Use MobileFaceNet for the bootstrap embedding, never a large model.** These embeddings exist only to pre-group
+  crops for labelling; the gold set is *labels*, not embeddings, and everything is re-embedded in Phase 5. Running
+  ResNet100 here turns a ~15-minute step into hours for zero benefit.
+
+**What the human labels — one decision per face, four options**
+
+| Label | Meaning |
+|---|---|
+| `person_N` | Same arbitrary ID for the same human. Names are irrelevant. |
+| `not_of_interest` | Real face, but a stranger/background person. Required so the clusterer may call it noise. |
+| `non_face` | Detector false positive (pattern, statue, poster). |
+| `unsure` | Genuinely ambiguous. Excluded from metrics. Never guess. |
+
+Optionally also tag **occlusion** (sunglasses / mask / hand / hair / hat) — machines detect this unreliably and it is a
+major failure mode worth slicing on.
+
+**What is auto-derived, never hand-labelled**
+
+`capture_date` / era (EXIF) · `camera_model` (EXIF) · face size as inter-ocular distance (landmarks) ·
+`yaw`/`pitch`/`roll` (landmarks) · blur (Laplacian variance ÷ face size) · exposure (histogram) ·
+`n_faces_in_photo` (detector) · `det_score` (detector)
+
+These exist so errors can be **sliced**: "F1 is 0.92 overall but 0.61 on profile faces" is actionable; a single
+aggregate number is not.
+
+**Target composition (~1,800 faces, 25–35 identities)**
+
+| Dimension | Target |
+|---|---|
+| Person-labelled faces | ~1,400 |
+| `not_of_interest` (strangers) | ~300 |
+| `non_face` (detector FPs) | ~50 |
+| Era | ≥35% oldest era · ≥35% last ~2 years · rest between |
+| **Cross-era identities** | ≥10 people present in both eras |
+| Children with ≥3 distinct age points | ≥2 (if applicable) |
+| Pose | ~55% frontal (<15° yaw) · ~30% semi (15–45°) · ~15% profile (>45°) |
+| Face size (inter-ocular distance) | ~10% tiny (<20px) · 25% small (20–40) · 40% medium (40–80) · 25% large (>80) |
+| Quality | ~60% good · 25% marginal · 15% bad |
+| Occlusion | ~15% |
+| Difficult lighting | ~20% backlit / low-light / mixed colour temperature |
+| Group photos (4+ faces) | ≥15% of faces |
+| Per-person-per-day cap | 2–3 faces |
+| Per-person total cap | ~60–80 faces |
+
+The sampler must emit a **composition report** and assert against these targets, so the mix is verified rather than assumed.
+
+**Include, despite intuition saying otherwise**
+- Candid and background faces — a gold set of posed portraits measures a product we are not building
+- Blurry / tiny / badly-lit faces — Phase 3 gating thresholds are tuned against exactly these
+- Strangers — without them, every wedding produces dozens of phantom people
+- Detector false positives — measures whether junk propagates into person albums
+- Group photos — where Phase 4 cannot-link constraints and small-face recall are tested
+
+**Exclude**
+- Exact duplicates (content hash) — pure metric inflation
+- Screenshots, documents, receipts, memes — not photographs
+- Burst frames beyond the per-person-per-day cap
+
+**Forwarded-image slice (messaging apps).** Real galleries contain thousands of forwarded images full of strangers,
+celebrities and memes. Exclude them from the main gold set, but keep a dedicated ~50-face slice to verify they land in
+`not_of_interest` and do not spawn phantom people. This is a genuine production failure mode.
+
 **Deliverables**
-- [ ] `scripts/build_gold_set.py` — extract face crops from a chosen subset of your library into `data/gold/`
-- [ ] A minimal labelling tool (CLI or tiny local web page) to assign person IDs to crops
-- [ ] `data/gold/labels.csv` with **1,000–2,000 labelled faces across ~30 identities**
+- [x] `scripts/scan_corpus.py` — dedup by content hash, classify and drop screenshots/documents/memes
+- [ ] `scripts/build_face_pool.py` — detect + align over the **entire** corpus, auto-derive per-face attributes
+- [ ] `scripts/sample_gold_set.py` — stratified sampler + **composition report asserting the targets above**
+- [ ] Keyboard-driven grid labelling tool (accept-cluster / pull-out / four label keys); must also surface the noise bucket
+- [ ] `data/gold/labels.csv` with **~1,800 labelled faces across 25–35 identities**
 - [ ] `src/faceindex/eval/metrics.py` implementing:
   - Pairwise Precision / Recall / F1
   - BCubed Precision / Recall / F1
@@ -217,7 +410,7 @@ Consequences of being a *clustering* system:
 - **Bootstrap the labelling, don't start from a blank slate.** Run detect+align, then a quick throwaway clustering pass, and label by *correcting* pre-grouped clusters (confirm / split / merge). Far faster than sorting loose crops. Caveat: you must also review the noise bucket and the rejected faces, or the gold set silently inherits the baseline's blind spots.
 - The Phase 1 labelling tool and the Phase 7 review UI are **the same tool**. Build it once, here, and grow it.
 - Freeze the gold set once built. If you keep editing it, your numbers stop being comparable.
-- Keep a **held-out** slice (~20%) you only look at when you think you're done, to catch overfitting to the gold set.
+- Keep a **held-out slice (~20%) split by *identity*, not by time** — people entirely absent from the tuning set. This answers "does this generalise to people I haven't seen?", which is the exact question Phase 8 must pass. Splitting by time instead would recreate the era blind spot described above.
 - Store gold crops as 112×112 aligned JPEGs — small, portable, and safe to upload for cloud experiments.
 
 **Exit criteria**
@@ -567,6 +760,7 @@ Consequences of being a *clustering* system:
 | `n_photos`, `n_faces_detected`, `n_faces_gated` | recall sanity |
 | `pairwise_P/R/F1` | primary metric |
 | `bcubed_P/R/F1` | less biased by cluster size |
+| **`f1_by_slice`** | per-slice F1 across pose / face-size / era / quality / occlusion buckets — this is what tells you *what to fix next* |
 | `nmi`, `ari` | secondary |
 | `n_clusters_pred` vs `n_clusters_true` | fragmentation check |
 | `pct_noise` | over-gating check |
@@ -586,7 +780,18 @@ Consequences of being a *clustering* system:
 | 5 | Problem framing | Unsupervised **clustering**, not identification | No enrolment DB, no 1:N lookup; new people are handled with zero training | 2026-09-04 | Never — this is a privacy design choice |
 | 6 | Model training | Use pretrained backbones as-is; Phases 9 & 10 default-skip | Cannot beat ArcFace with ~30 identities; gains live in the pipeline, not the weights | 2026-09-04 | Core track plateaus and errors are proven to be embedding-quality errors |
 | 7 | Gold-set labels | Evaluation ground truth only, never training input | Enables measured comparison of configs; keeps the system unsupervised | 2026-09-04 | |
-| 8 | | | | | |
+| 8 | Dev/run topology | Author on Mac, sync code via GitHub; corpus + detect pass on Linux; sync ~1 GB of crops to Mac for the experiment loop | Avoids moving ~70 GB; the iteration loop only needs aligned crops | 2026-09-05 | Phase 5 detector change needs originals again |
+| 9 | Reproducibility across machines | CPU execution provider only for stored embeddings; pinned versions; cross-machine parity test | arm64/x86_64 and CoreML/CPU do not agree bit-for-bit | 2026-09-05 | |
+| 10 | Quality policy | Desktop path takes no shortcuts; all mobile trades logged and measured in §9 | Prevents silent quality erosion via "probably fine" optimisations | 2026-09-05 | Never |
+| 11 | Python version | 3.11 in conda env `fca` | Widest wheel availability for onnxruntime/sklearn; base 3.14 has none | 2026-09-06 | |
+| 12 | Clustering library | `sklearn.cluster.HDBSCAN`, not the standalone `hdbscan` package | Avoids a fragile C-extension build on arm64 and the constrained Linux box | 2026-09-06 | Need features only the standalone package has |
+| 13 | JPEG decoding | Plain `Pillow` on both machines, never `pillow-simd` | Does not build on arm64; differing decoders change pixels, hence embeddings | 2026-09-06 | |
+| 14 | Model integrity | Checksums recorded on first download into committed `models/models.lock.json` | Upstream has re-cut archives before; a lock proves both machines run identical weights | 2026-09-06 | |
+| 15 | Video handling | Rejected on file extension before any I/O | Confirmed present in the corpus; opening them reads gigabytes for nothing | 2026-09-06 | Video face indexing ever becomes a goal |
+| 16 | Document/meme detection | Not attempted | Needs a model to do reliably; they fall through as photos and simply yield no faces. A heuristic risks discarding real photos | 2026-09-06 | Junk faces become a measurable problem |
+| 17 | Messaging-app images | Classified as a distinct `forwarded` kind | Keeps thousands of stranger faces out of the main sample while enabling the dedicated forwarded-image slice | 2026-09-06 | |
+| 18 | Duplicate canonical copy | Oldest mtime, ties broken on path | Deterministic across runs and machines | 2026-09-06 | |
+| 19 | | | | | |
 
 ---
 
@@ -594,8 +799,11 @@ Consequences of being a *clustering* system:
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Bad gold set → all conclusions wrong | Critical | Label carefully once; hold out a slice; over-sample hard cases |
+| Bad gold set → all conclusions wrong | Critical | Label carefully once; hold out a slice by identity; over-sample hard cases |
+| **Duplicates / burst shots inflate metrics** | Critical, silent | Dedup by content hash; cap faces per person per day and per person overall; track BCubed alongside pairwise |
+| Gold set confined to one era → cross-age drift untested | Critical, silent | Sample across all eras; require ≥10 cross-era identities |
 | Preprocessing mismatch (RGB/BGR, normalisation) | Critical, silent | Parity-test against reference `insightface` output on day one |
+| **arm64/x86_64 numerical drift between dev and run machines** | High, silent | CPU EP only for stored embeddings; pinned versions; cross-machine parity test in CI; record platform per row |
 | Model download links rot | High | Mirror + checksum everything in Phase 0 |
 | Overfitting to your own 30 people (Phases 8–9) | High | Always evaluate on held-out identities and a general benchmark |
 | Demographic bias in pretrained models | High | Measure per-person recall; models are Western-data-skewed |
@@ -615,3 +823,34 @@ Consequences of being a *clustering* system:
 - Heavy occlusion (masks, sunglasses, hats) — falls to noise.
 - Demographic performance gaps inherited from training data.
 - We will not match Google Photos. The target is "good enough that a privacy-conscious user prefers it."
+
+---
+
+## 9. Quality Compromise Register
+
+Every accuracy-for-resources trade lives here with a **measured** cost. `UNMEASURED` entries block the phase that
+introduces them. Two things that are constantly conflated and are *not* the same:
+
+| | What it is | Real cost |
+|---|---|---|
+| **Embedding storage quantisation** (fp32→int8 on an L2-normalised vector) | compressing the stored number | near-lossless; a cheap 4× win |
+| **Model quantisation** (int8 weights/activations) | changing the computation | genuine accuracy loss, typically ~0.5–2% |
+
+| # | Compromise | Where | Why | Measured cost | Verdict |
+|---|---|---|---|---|---|
+| C1 | MobileFaceNet instead of ResNet100 | Phase 11 (mobile) | 13 MB vs 250 MB; latency | UNMEASURED — expect large (~19 pts MR-All in vendor tables) | **MOBILE ONLY.** Server never uses it. |
+| C2 | Model int8 quantisation | Phase 11 (mobile) | size + speed on ARM | UNMEASURED | MOBILE ONLY; must report gold-set delta vs fp32 |
+| C3 | Embedding storage int8 | Phase 6 | 4× storage | UNMEASURED; expected ~0 | Accept only after measuring |
+| C4 | Decode at 1280px, not full res | Phase 2 | 4–8× faster decode | UNMEASURED — costs small-face recall | Temporary; Phase 5 reverts to full res on server |
+| C5 | SCRFD-500M instead of 10G | Phase 2 | speed during bootstrap | ~68.5 vs ~83.1 WIDER-hard (vendor) | Temporary; server upgrades in Phase 5 |
+| C6 | MobileFaceNet for gold-set bootstrap | Phase 1 | 15 min vs hours | Not a product compromise — labels are human-verified | Accept; mild pre-grouping bias only |
+| C7 | Quality gating drops faces | Phase 3 | precision | Deliberate precision/recall trade; the sweep finds the knee | Accept with published curve |
+| C8 | Flip-TTA disabled | Phase 2–4 | 2× speed | UNMEASURED, expected small | Re-evaluate in Phase 5 |
+
+### Forbidden without an explicit measured exception
+- **Model pruning** — small gains on face backbones, real accuracy cost. Not planned.
+- **Face restoration (GFPGAN/CodeFormer) before embedding** — hallucinates identity. Actively harmful.
+- **ANN search (HNSW) before brute force is measured as too slow** — trades recall for speed you don't need at this scale.
+- **`NNAPI_FLAG_USE_FP16`** — silent precision loss on Android for a speedup that must be proven first.
+- **Reusing clustering thresholds across different embedding models** — thresholds are model-specific.
+- **Any compromise on the desktop/server path.** It is the reference; if it is slow, make it faster, not worse.

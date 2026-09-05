@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# NEVER COMMIT THESE. See PLAN.md §3 "Repository hygiene".
+#   data/   contains face crops and embeddings = biometric data.
+#   models/ contains weights that are licensed non-commercial, no redistribution.
+# ---------------------------------------------------------------------------
+data/
+
+# Ignore the weights themselves, but the checksum lock MUST be committed so both
+# machines can prove they are running identical models.
+models/*
+!models/models.lock.json
+
+*.db
+*.sqlite
+*.sqlite3
+*.onnx
+*.npy
+*.npz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Notebooks
+.ipynb_checkpoints/
