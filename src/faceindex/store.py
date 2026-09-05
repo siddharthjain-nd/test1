@@ -17,11 +17,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Bumped when the scanner's classification or metadata extraction changes in a way that
-# invalidates previously stored rows.
-SCAN_VERSION = "1"
+# invalidates previously stored rows. Raising it forces a rescan of every file.
+SCAN_VERSION = "2"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -48,9 +48,13 @@ CREATE TABLE IF NOT EXISTS photos (
     image_format  TEXT,
 
     taken_at      TEXT,
-    -- Where taken_at came from: exif | filename | folder | mtime. NULL when unknown.
+    -- Where taken_at came from: exif_original | exif_digitized | filename |
+    -- exif_modified | folder | mtime. NULL when unknown.
     -- Provenance matters: mtime is unreliable on copied backups and must stay separable.
     taken_at_source TEXT,
+    -- EXIF tag 306 is a *modification* time, not a capture time. Bulk edits and copies
+    -- rewrite it, so it is stored apart from taken_at and ranked below filename dates.
+    exif_modified_at TEXT,
     camera_make   TEXT,
     camera_model  TEXT,
     orientation   INTEGER,
@@ -72,7 +76,10 @@ CREATE INDEX IF NOT EXISTS idx_photos_duplicate_of ON photos(duplicate_of);
 """
 
 # Columns added after the first release, applied to existing databases on open.
-_MIGRATIONS: tuple[tuple[str, str], ...] = (("taken_at_source", "TEXT"),)
+_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("taken_at_source", "TEXT"),
+    ("exif_modified_at", "TEXT"),
+)
 
 
 def _apply_migrations(conn: sqlite3.Connection) -> None:

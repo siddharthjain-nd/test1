@@ -363,6 +363,7 @@ aggregate number is not.
 | Difficult lighting | ~20% backlit / low-light / mixed colour temperature |
 | Group photos (4+ faces) | ≥15% of faces |
 | **Forwarded (messaging-app) images** | **~33%, matching their real share of the corpus** |
+| **Beauty-filtered images** | **~12%, matching their real share** — see below |
 | Per-person-per-day cap | 2–3 faces |
 | Per-person total cap | ~60–80 faces |
 
@@ -400,6 +401,13 @@ biased, gate on *relative* face size (fraction of image height) rather than abso
 
 Still worth isolating: a subset of forwarded images genuinely are memes, celebrities and strangers.
 Those are handled by the `not_of_interest` label during labelling, not by discarding the whole class.
+
+**Beauty-filtered images are a distinct hard case.** The measured corpus contains a single folder of
+2,163 images (~12% of all candidates) produced by a beauty-retouching app. These filters smooth skin,
+enlarge eyes and slim jawlines — they alter face *geometry*, which is precisely what the embedding
+encodes. The same person filtered and unfiltered may not cluster together. Sample them at their real
+share and track them as their own slice; if they cluster separately from the same person's unfiltered
+photos, that is a finding, not a bug to hide.
 
 **Deliverables**
 - [x] `scripts/scan_corpus.py` — dedup by content hash, classify and drop screenshots/documents/memes
@@ -810,7 +818,7 @@ Those are handled by the `not_of_interest` label during labelling, not by discar
 | 17 | Messaging-app images | Classified as a distinct `forwarded` kind | Keeps thousands of stranger faces out of the main sample while enabling the dedicated forwarded-image slice | 2026-09-06 | |
 | 18 | Duplicate canonical copy | Oldest mtime, ties broken on path | Deterministic across runs and machines | 2026-09-06 | |
 | 19 | Forwarded/WhatsApp images | **First-class face candidates**, sampled into the gold set at their real 33% share | Measured: they are the primary channel for family and event photos in this library, not memes | 2026-09-06 | Corpus profile changes |
-| 20 | Date fallback order | exif > filename > folder year > mtime (mtime opt-in only) | Messaging apps strip EXIF but keep the date in the filename; mtime is destroyed by copying to a backup drive | 2026-09-06 | |
+| 20 | Date fallback order | exif_original > exif_digitized > filename > exif_modified (tag 306) > folder year > mtime (opt-in) | Tag 306 is a *modification* time: bulk edits and copies rewrite it, producing dozens of unrelated photos sharing a timestamp to the second. Camera and messaging filenames are more reliable | 2026-09-06 | Measured disagreement rate says otherwise |
 | 21 | | | | | |
 
 ---
@@ -832,6 +840,8 @@ Those are handled by the `not_of_interest` label during labelling, not by discar
 | Scope creep into a full photo manager | Medium | Non-goals are listed in §0; re-read them |
 | Kids / siblings / twins mis-cluster | Medium | Accept; rely on Phase 7 correction UX |
 | **Quality gating biased against low-resolution forwarded images** | High, silent | 33% of candidates are recompressed messaging images. Report gating rate and F1 separately for `forwarded`; gate on relative face size if absolute pixels prove biased |
+| **Beauty-filtered photos fail to match the same person unfiltered** | Medium | ~12% of this corpus. Sample at real share, track as a slice, measure rather than assume |
+| **EXIF tag 306 mistaken for a capture time** | Medium, silent | Ranked below filename dates; disagreement rate reported as a warning |
 | Re-clustering destroys user labels | High | Confirmed labels are immutable anchors |
 
 ---

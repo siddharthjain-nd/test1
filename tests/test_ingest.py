@@ -101,6 +101,8 @@ def corpus(tmp_path: Path) -> Path:
     (root / "junk" / "truncated.jpg").write_bytes(b"\xff\xd8\xff\xe0 not really a jpeg")
     (root / "junk" / "notes.txt").write_text("hello")
     (root / "junk" / "photo.dng").write_bytes(b"\x00" * 2048)
+    (root / "junk" / "song.mp3").write_bytes(b"\x00" * 4096)
+    (root / "junk" / "drive-download.zip").write_bytes(b"PK\x03\x04" + b"\x00" * 512)
 
     (root / ".hidden").mkdir(parents=True, exist_ok=True)
     (root / ".hidden" / "secret.jpg").write_bytes(b"\x00" * 128)
@@ -120,6 +122,8 @@ def test_classification_of_every_file_type(corpus: Path, tmp_path: Path) -> None
     by_kind, db_path = _scan(corpus, tmp_path)
 
     assert by_kind.get(Kind.VIDEO) == 2, "both video extensions rejected on extension alone"
+    assert by_kind.get(Kind.AUDIO) == 1
+    assert by_kind.get(Kind.ARCHIVE) == 1, "archives are flagged, they usually hold photos"
     assert by_kind.get(Kind.RAW) == 1
     assert by_kind.get(Kind.UNSUPPORTED) == 1, "notes.txt"
     assert by_kind.get(Kind.TINY) == 1

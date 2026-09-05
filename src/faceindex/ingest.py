@@ -34,8 +34,33 @@ IMAGE_EXTENSIONS = frozenset(
 
 # Rejected on extension alone, before any I/O. Opening these would read gigabytes.
 VIDEO_EXTENSIONS = frozenset(
-    {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".3gp", ".mpg", ".mpeg", ".wmv", ".flv", ".webm"}
+    {
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".m4v",
+        ".3gp",
+        ".3gpp",
+        ".mpg",
+        ".mpeg",
+        ".mpe",
+        ".wmv",
+        ".flv",
+        ".webm",
+        ".mts",
+        ".m2ts",
+        ".ogv",
+        ".asf",
+        ".rm",
+        ".rmvb",
+    }
 )
+
+AUDIO_EXTENSIONS = frozenset({".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".wma", ".amr"})
+
+# Flagged rather than silently ignored: an archive in a photo library usually contains photos.
+ARCHIVE_EXTENSIONS = frozenset({".zip", ".rar", ".7z", ".tar", ".gz"})
 
 # Camera RAW. Out of scope for now; recorded so the count is visible rather than silent.
 RAW_EXTENSIONS = frozenset({".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".raf"})
@@ -77,6 +102,8 @@ class Kind:
     SCREENSHOT = "screenshot"
     FORWARDED = "forwarded"
     VIDEO = "video"
+    AUDIO = "audio"
+    ARCHIVE = "archive"
     RAW = "raw"
     TINY = "tiny"
     UNSUPPORTED = "unsupported"
@@ -100,6 +127,8 @@ class PhotoRecord:
     height: int | None = None
     image_format: str | None = None
     taken_at: str | None = None
+    taken_at_source: str | None = None
+    exif_modified_at: str | None = None
     camera_make: str | None = None
     camera_model: str | None = None
     orientation: int | None = None
@@ -120,8 +149,10 @@ class ScanStats:
 
 
 class DateSource:
-    EXIF = "exif"
+    EXIF_ORIGINAL = "exif_original"
+    EXIF_DIGITIZED = "exif_digitized"
     FILENAME = "filename"
+    EXIF_MODIFIED = "exif_modified"
     FOLDER = "folder"
     MTIME = "mtime"
 
@@ -171,31 +202,43 @@ def year_from_folder(rel_path: str) -> str | None:
 
 
 def backfill_dates(conn: sqlite3.Connection, *, use_mtime: bool = False) -> dict[str, int]:
-    """Fill missing ``taken_at`` from filename, then folder, then optionally mtime.
+    """Fill missing ``taken_at`` from weaker sources, in descending order of trust.
 
-    Database-only: reads no files, so this is fast and safe to rerun. EXIF-derived dates are
-    never overwritten.
+    Priority: EXIF DateTimeOriginal/Digitized (set during scanning) > filename >
+    EXIF DateTime (tag 306) > folder year > mtime.
 
-    ``use_mtime`` is off by default because copying a library resets modification times, and
-    a wrong date is worse than no date -- it would feed a false signal into the Phase 4 time
-    prior. ``taken_at_source`` records provenance either way so the choice stays measurable.
+    **Filename beats EXIF tag 306 deliberately.** Tag 306 is a modification time: bulk
+    edits, exports and copies rewrite it, which shows up as dozens of unrelated photos
+    sharing a timestamp to the second. A camera or messaging filename is the more
+    reliable signal.
+
+    Database-only: reads no files, so this is fast and safe to rerun. Capture-tag EXIF
+    dates are never overwritten.
+
+    ``use_mtime`` is off by default because copying a library resets modification times,
+    and a wrong date is worse than no date -- it would feed a false signal into the
+    Phase 4 time prior.
     """
-    conn.execute(
-        "UPDATE photos SET taken_at_source = ? WHERE taken_at IS NOT NULL "
-        "AND taken_at_source IS NULL",
-        (DateSource.EXIF,),
-    )
-
-    counts = {DateSource.FILENAME: 0, DateSource.FOLDER: 0, DateSource.MTIME: 0}
+    counts = {
+        DateSource.FILENAME: 0,
+        DateSource.EXIF_MODIFIED: 0,
+        DateSource.FOLDER: 0,
+        DateSource.MTIME: 0,
+    }
     rows = conn.execute(
-        "SELECT id, rel_path, mtime FROM photos WHERE taken_at IS NULL AND kind NOT IN (?, ?)",
-        (Kind.UNREADABLE, Kind.UNSUPPORTED),
+        "SELECT id, rel_path, mtime, exif_modified_at FROM photos "
+        "WHERE taken_at IS NULL AND kind NOT IN (?, ?, ?, ?, ?)",
+        (Kind.UNREADABLE, Kind.UNSUPPORTED, Kind.VIDEO, Kind.AUDIO, Kind.ARCHIVE),
     ).fetchall()
 
     for row in rows:
         rel_path = str(row["rel_path"])
         resolved = date_from_filename(Path(rel_path).name)
         source = DateSource.FILENAME
+
+        if resolved is None and row["exif_modified_at"]:
+            resolved = str(row["exif_modified_at"])
+            source = DateSource.EXIF_MODIFIED
 
         if resolved is None:
             resolved = year_from_folder(rel_path)
@@ -218,6 +261,32 @@ def backfill_dates(conn: sqlite3.Connection, *, use_mtime: bool = False) -> dict
 
     conn.commit()
     return counts
+
+
+def filename_exif_disagreements(conn: sqlite3.Connection, *, days: int = 7) -> tuple[int, int]:
+    """Count photos whose filename date and EXIF capture date disagree by more than ``days``.
+
+    A high rate means one of the two sources is untrustworthy for this corpus and the
+    priority order deserves revisiting. Returns ``(disagreements, comparable_rows)``.
+    """
+    rows = conn.execute(
+        "SELECT rel_path, taken_at FROM photos WHERE taken_at IS NOT NULL "
+        "AND taken_at_source IN (?, ?)",
+        (DateSource.EXIF_ORIGINAL, DateSource.EXIF_DIGITIZED),
+    ).fetchall()
+
+    comparable = 0
+    disagreements = 0
+    for row in rows:
+        from_name = date_from_filename(Path(str(row["rel_path"])).name)
+        if from_name is None:
+            continue
+        comparable += 1
+        delta = datetime.fromisoformat(str(row["taken_at"])) - datetime.fromisoformat(from_name)
+        if abs(delta.days) > days:
+            disagreements += 1
+
+    return disagreements, comparable
 
 
 def iter_files(root: Path, *, follow_symlinks: bool = False) -> Iterator[Path]:
@@ -335,19 +404,25 @@ def read_header(path: Path) -> tuple[dict[str, Any], str | None]:
                     metadata["orientation"] = orientation
 
                 taken = None
+                taken_source = None
                 try:
                     sub_ifd = exif.get_ifd(ExifTags.IFD.Exif)
                 except (AttributeError, KeyError, OSError, ValueError):
                     sub_ifd = {}
-                for source, tag in (
-                    (sub_ifd, _EXIF_DATETIME_ORIGINAL),
-                    (sub_ifd, _EXIF_DATETIME_DIGITIZED),
-                    (exif, _EXIF_DATETIME),
+
+                for tag, source in (
+                    (_EXIF_DATETIME_ORIGINAL, DateSource.EXIF_ORIGINAL),
+                    (_EXIF_DATETIME_DIGITIZED, DateSource.EXIF_DIGITIZED),
                 ):
-                    taken = _parse_exif_datetime(source.get(tag))
+                    taken = _parse_exif_datetime(sub_ifd.get(tag))
                     if taken:
+                        taken_source = source
                         break
+
                 metadata["taken_at"] = taken
+                metadata["taken_at_source"] = taken_source
+                # Tag 306 is a modification time. Kept apart so it can rank below filenames.
+                metadata["exif_modified_at"] = _parse_exif_datetime(exif.get(_EXIF_DATETIME))
 
                 lat, lon = _extract_gps(exif)
                 metadata["gps_lat"], metadata["gps_lon"] = lat, lon
@@ -419,6 +494,10 @@ def build_record(path: Path, root: Path, *, compute_hash: bool = True) -> PhotoR
     suffix = path.suffix.lower()
     if suffix in VIDEO_EXTENSIONS:
         return rejected(Kind.VIDEO, "video extension")
+    if suffix in AUDIO_EXTENSIONS:
+        return rejected(Kind.AUDIO, "audio extension")
+    if suffix in ARCHIVE_EXTENSIONS:
+        return rejected(Kind.ARCHIVE, "archive extension")
     if suffix in RAW_EXTENSIONS:
         return rejected(Kind.RAW, "raw extension")
     if suffix not in IMAGE_EXTENSIONS:
@@ -444,6 +523,8 @@ def build_record(path: Path, root: Path, *, compute_hash: bool = True) -> PhotoR
         height=metadata.get("height"),
         image_format=metadata.get("image_format"),
         taken_at=metadata.get("taken_at"),
+        taken_at_source=metadata.get("taken_at_source"),
+        exif_modified_at=metadata.get("exif_modified_at"),
         camera_make=metadata.get("camera_make"),
         camera_model=metadata.get("camera_model"),
         orientation=metadata.get("orientation"),
@@ -457,19 +538,20 @@ def _insert(conn: sqlite3.Connection, record: PhotoRecord, scanned_at: str) -> N
         """
         INSERT INTO photos (
             path, rel_path, size_bytes, mtime, quick_hash, kind, reason,
-            width, height, image_format, taken_at, camera_make, camera_model,
-            orientation, gps_lat, gps_lon, scanned_at, scan_version
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            width, height, image_format, taken_at, taken_at_source, exif_modified_at,
+            camera_make, camera_model, orientation, gps_lat, gps_lon, scanned_at, scan_version
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(path) DO UPDATE SET
             rel_path=excluded.rel_path, size_bytes=excluded.size_bytes,
             mtime=excluded.mtime, quick_hash=excluded.quick_hash, kind=excluded.kind,
             reason=excluded.reason, width=excluded.width, height=excluded.height,
             image_format=excluded.image_format, taken_at=excluded.taken_at,
+            taken_at_source=excluded.taken_at_source,
+            exif_modified_at=excluded.exif_modified_at,
             camera_make=excluded.camera_make, camera_model=excluded.camera_model,
             orientation=excluded.orientation, gps_lat=excluded.gps_lat,
             gps_lon=excluded.gps_lon, scanned_at=excluded.scanned_at,
-            scan_version=excluded.scan_version, content_hash=NULL, duplicate_of=NULL,
-            taken_at_source=NULL
+            scan_version=excluded.scan_version, content_hash=NULL, duplicate_of=NULL
         """,
         (
             str(record.path),
@@ -483,6 +565,8 @@ def _insert(conn: sqlite3.Connection, record: PhotoRecord, scanned_at: str) -> N
             record.height,
             record.image_format,
             record.taken_at,
+            record.taken_at_source,
+            record.exif_modified_at,
             record.camera_make,
             record.camera_model,
             record.orientation,

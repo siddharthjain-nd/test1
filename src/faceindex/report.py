@@ -13,7 +13,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from faceindex.ingest import FACE_CANDIDATE_KINDS
+from faceindex.ingest import FACE_CANDIDATE_KINDS, filename_exif_disagreements
 
 
 def _rows(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -> list[sqlite3.Row]:
@@ -175,6 +175,25 @@ def _print_warnings(
     raw = _rows(conn, "SELECT COUNT(*) AS n FROM photos WHERE kind = 'raw'")[0]["n"]
     if raw:
         warnings.append(f"{raw:,} RAW files skipped (out of scope). They contain faces you lose.")
+
+    archives = _rows(
+        conn,
+        "SELECT rel_path FROM photos WHERE kind = 'archive' ORDER BY size_bytes DESC LIMIT 5",
+    )
+    if archives:
+        listed = ", ".join(str(r["rel_path"])[:50] for r in archives)
+        warnings.append(
+            f"{len(archives)} archive(s) found and skipped. An archive inside a photo library "
+            f"usually contains photos -- extract them into the corpus and rescan: {listed}"
+        )
+
+    disagreements, comparable = filename_exif_disagreements(conn)
+    if comparable and disagreements / comparable > 0.10:
+        warnings.append(
+            f"{disagreements:,} of {comparable:,} photos ({100 * disagreements / comparable:.0f}%) "
+            "have an EXIF capture date more than a week away from the date in their filename. "
+            "One source is unreliable here; inspect a sample before trusting the era histogram."
+        )
 
     if warnings:
         console.print("\n[bold yellow]Warnings[/bold yellow]")

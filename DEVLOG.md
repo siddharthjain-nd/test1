@@ -18,6 +18,66 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-06 — Date recovery validated; EXIF tag 306 demoted
+
+**Phase:** 1  **Machine:** linux (data) / mac (code)  **Status:** done
+
+### Measured — date recovery worked
+
+| | Before | After |
+|---|---|---|
+| Undated candidates | 6,718 (37%) | **960 (5.2%)** |
+| 2024 | 353 | **2,773** |
+| 2025 | 375 | **1,366** |
+
+Provenance: exif 11,648 (63.4%) · filename 5,758 (31.4%) · none 960 (5.2%).
+The user's recollection of "~2,751 images in 2024" matched the corrected figure of 2,773; the
+original report was wrong, not their memory. `--inspect "IISc"` confirmed: 4,401 files, 2,556 of
+which recovered a 2024 date from filenames alone.
+
+### Bug found: EXIF tag 306 was outranking filenames
+Sample rows from `IISc/COORG/` showed seven photos with EXIF times inside a 25-second window
+(14:58:49 … 14:59:14) but *different aspect ratios* (1280x960, 960x1280, 1222x720, 1089x960).
+A burst cannot produce that; those are bulk-operation timestamps.
+
+Cause: the reader fell back to EXIF tag 306 (`DateTime`), which is a **modification** time, and
+treated it as a capture time. Fixed:
+
+- `taken_at` now only ever holds `DateTimeOriginal` / `DateTimeDigitized`.
+- Tag 306 is stored separately in `exif_modified_at` and ranked **below** filename dates.
+- New priority: `exif_original > exif_digitized > filename > exif_modified > folder > mtime`.
+- `filename_exif_disagreements()` reports how often the two sources diverge by more than a week,
+  surfaced as a warning above 10%.
+
+Schema v3, `SCAN_VERSION` bumped to 2, so a rescan is required to populate the new column.
+
+### Other findings from the real corpus
+- **911 MPO files** (5% of candidates) — dual-camera JPEGs from the Xiaomi phones. Pillow reads
+  frame 0, so detection works.
+- **80 HEIF** — `pillow-heif` confirmed working on real files.
+- **`Moblie clicks/You cam perfect`: 2,163 files (~12% of candidates)** produced by a beauty
+  retouching app. These filters alter face *geometry*, which is what the embedding encodes, so the
+  same person filtered and unfiltered may not cluster together. Added to the gold-set strata at its
+  real share and to the risk register.
+- **Unsupported files explained**: 236 mp3 (2 GB of music), 13 `.dat` (VCD MPEG), 10 `.vcd`,
+  4 `.ppt`, 3 `.psd` (138 MB), 1 `.zip` (54 MB). No photo format is being wrongly rejected.
+- **`UIT/farewell/drive-download-...zip` (54 MB)** almost certainly contains photos. New `archive`
+  kind plus a warning telling the user to extract and rescan.
+- The 9 unreadable files are genuinely zero bytes (Android partial writes). Nothing recoverable.
+
+### Did
+- New kinds `audio` and `archive`, so 2 GB of music is no longer reported as "unsupported photos".
+- Video extension list extended: `.mts .m2ts .3gpp .mpe .ogv .asf .rm .rmvb`.
+- `.dat` and `.vcd` deliberately **left** as unsupported — `.dat` is genuinely ambiguous and
+  claiming it is video would be overreach.
+- Largest-folders table in `--diagnose`, flagging majority-undated folders in red.
+
+### Next
+- Rescan on Linux (SCAN_VERSION bump forces it, ~12 min) to populate `exif_modified_at`.
+- Then `scripts/build_face_pool.py`.
+
+---
+
 ## 2026-09-06 — Correction: forwarded images are first-class; era gap explained
 
 **Phase:** 1  **Machine:** mac  **Status:** done
