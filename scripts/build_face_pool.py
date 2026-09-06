@@ -100,6 +100,54 @@ def print_stats(conn: object) -> None:
         by_kind.add_row(row["kind"], f"{row['photos']:,}", f"{row['faces']:,}", f"{ratio:.2f}")
     console.print(by_kind)
 
+    _print_size_bias(conn)
+
+
+def _print_size_bias(conn: object) -> None:
+    """Face size split by photo kind.
+
+    Tests the risk that messaging-app recompression makes forwarded faces systematically
+    smaller, so that quality gating on absolute pixels would silently discard the user's
+    party photos while keeping their camera photos (PLAN.md risk register).
+    """
+    table = Table(title="Face size by photo kind (tests gating bias)", header_style="bold")
+    table.add_column("Kind")
+    table.add_column("Faces", justify="right")
+    table.add_column("Median IOD", justify="right")
+    table.add_column("Tiny <20px", justify="right")
+    table.add_column("Usable >=40px", justify="right")
+
+    kinds = conn.execute(  # type: ignore[attr-defined]
+        "SELECT DISTINCT p.kind AS kind FROM faces f JOIN photos p ON p.id = f.photo_id "
+        "WHERE f.pool_version = ?",
+        (facepool.POOL_VERSION,),
+    ).fetchall()
+
+    for entry in kinds:
+        kind = str(entry["kind"])
+        sizes = [
+            float(r["interocular_px"])
+            for r in conn.execute(  # type: ignore[attr-defined]
+                "SELECT f.interocular_px FROM faces f JOIN photos p ON p.id = f.photo_id "
+                "WHERE f.pool_version = ? AND p.kind = ? ORDER BY f.interocular_px",
+                (facepool.POOL_VERSION, kind),
+            )
+        ]
+        if not sizes:
+            continue
+        median = sizes[len(sizes) // 2]
+        tiny = sum(1 for s in sizes if s < 20) / len(sizes)
+        usable = sum(1 for s in sizes if s >= 40) / len(sizes)
+        table.add_row(
+            kind,
+            f"{len(sizes):,}",
+            f"{median:.1f} px",
+            f"{100 * tiny:5.1f}%",
+            f"{100 * usable:5.1f}%",
+        )
+
+    console.print(table)
+
 
 def main() -> int:
     default_workers = max(1, min(4, (os.cpu_count() or 2) // 2))

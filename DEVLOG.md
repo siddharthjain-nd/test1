@@ -18,6 +18,65 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-06 — Face pool built on the real corpus
+
+**Phase:** 1  **Machine:** linux  **Status:** done
+
+### Measured
+
+**63,878 faces from 18,366 photos = 3.48 faces/photo.**
+102.3 minutes at 3.0 photo/s, SCRFD-10G @640, 2 workers x 2 threads, decode cap 2048px.
+
+Faster than the 2–3 h estimate. Resumability confirmed: 18,166 pending + 200 from the trial
+run = 18,366 total.
+
+| Size (inter-ocular px) | Faces | Share |
+|---|---|---|
+| tiny <20 | 21,594 | 33.8% |
+| small 20–40 | 16,241 | 25.4% |
+| medium 40–80 | 14,088 | 22.1% |
+| large >80 | 11,955 | 18.7% |
+
+| Pose | Faces | Share |
+|---|---|---|
+| frontal <15 deg | 30,742 | 48.1% |
+| semi 15–45 | 19,771 | 31.0% |
+| profile >45 | 13,365 | 20.9% |
+
+| Kind | Photos | Faces | Faces/photo |
+|---|---|---|---|
+| photo | 12,733 | 43,394 | 3.41 |
+| forwarded | 5,633 | 20,484 | 3.64 |
+
+Errors: 3 of 18,366, all truncated JPEGs. Left unrecovered — three files is noise, and
+enabling `LOAD_TRUNCATED_IMAGES` would silently accept corrupt pixel data everywhere.
+
+### What the numbers say
+- **3.48 faces/photo is well above the 1.5–2.5 assumed while planning.** This is a
+  group-photo-heavy library, consistent with college and family events.
+- **Forwarded images yield *more* faces per photo than camera originals (3.64 vs 3.41)**
+  despite being ~5x smaller. Group photos are what people share. Combined with their lower
+  resolution, this sharpens the gating-bias risk already in the register.
+- **34% of faces are under 20 px inter-ocular.** At that size, warping to 112x112 is mostly
+  interpolation and the embedding will be close to noise. Whether these are genuine crowd
+  faces or detector false positives is unresolved and must be settled by looking, not by
+  statistics — it sets the Phase 3 gating threshold and changes the gold-set strata.
+- Real pose distribution (20.9% profile) is higher than the 15% assumed for the gold set.
+  The strata targets in PLAN.md should follow the corpus, not the other way round.
+
+### Did
+- `scripts/contact_sheet.py` — renders a labelled grid of crops for any size/pose/blur/kind
+  bucket, so the tiny-face question can be answered by eye.
+- `--stats` gained a **face size by photo kind** table, directly testing whether messaging
+  recompression biases face size and therefore gating.
+- `CONTEXT.md` — a briefing for a fresh session or another machine.
+
+### Next
+- Look at the tiny bucket, and at forwarded vs photo separately.
+- Embeddings (MobileFaceNet), bootstrap clustering, stratified sampler, labelling UI.
+
+---
+
 ## 2026-09-06 — Face pool builder (detect + align)
 
 **Phase:** 1  **Machine:** mac  **Status:** done, ready to run on the corpus
