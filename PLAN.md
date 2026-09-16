@@ -887,6 +887,7 @@ introduces them. Two things that are constantly conflated and are *not* the same
 | C6 | MobileFaceNet for gold-set bootstrap | Phase 1 | 15 min vs hours | Not a product compromise — labels are human-verified | Accept; mild pre-grouping bias only |
 | C7 | Quality gating drops faces | Phase 3 | precision | Deliberate precision/recall trade; the sweep finds the knee | Accept with published curve |
 | C8 | Flip-TTA disabled | Phase 2–4 | 2× speed | UNMEASURED, expected small | Re-evaluate in Phase 5 |
+| C9 | PCA-128 before bootstrap clustering | Phase 1 | Measured 6× speedup: ~62 min → ~8.4 min at 63,878 faces (M2); scaling N^2.14 → N^2.00 | **UNMEASURED.** An attempt on synthetic data returned ARI 0.018 but the data was 69% noise, so it measured nothing and was discarded | **REJECTED for now.** Not cosmetic: the sampler uses bootstrap clusters as its identity stand-in for the per-person caps and cross-era detection, so degrading it degrades gold-set composition silently. Re-open only with an ARI measured on the real 63,878 embeddings |
 
 ### Forbidden without an explicit measured exception
 - **Model pruning** — small gains on face backbones, real accuracy cost. Not planned.

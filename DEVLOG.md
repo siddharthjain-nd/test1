@@ -18,6 +18,64 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-16 — Embeddings built; bootstrap clustering cost measured
+
+**Phase:** 1  **Machine:** linux (embed) / mac (benchmark)  **Status:** embed done
+
+### Measured — the full pool is embedded
+
+**63,878 faces in 11.6 minutes at 91 face/s.** MobileFaceNet, CPU execution provider,
+`Linux-x86_64`, onnxruntime 1.22.1. Zero pending, zero unreadable crops.
+
+Faster than the 8–15 min PLAN.md estimate despite carrying **twice** the assumed face count,
+which confirms the reasoning behind decision 21: quality belongs in detection, speed in
+embedding. The expensive irreversible pass took 102 minutes; the cheap repeatable one takes 12.
+
+Provenance is a single row — one model, one platform, one runtime version — so nothing is
+silently mixing incomparable vectors. Resume was exercised for real: 63,378 processed in this
+run plus the 500-face trial equals the full 63,878.
+
+### Measured — HDBSCAN scaling, before running it on the real pool
+
+Benchmarked on synthetic unit-norm data of face-pool shape, on the M2:
+
+| N | dim | seconds | peak RSS | 
+|---|---|---|---|
+| 4,000 | 512 | 9.9 | 228 MB |
+| 8,000 | 512 | 45.3 | 272 MB |
+| 16,000 | 512 | 190.7 | 320 MB |
+
+Empirical scaling **t ~ N^2.14**, predicting **~62 min at 63,878 on the M2**, so roughly 2–4 h
+on the i3. With `--pca 128`: **8.4 min predicted, a 6x speedup**, scaling N^2.00.
+
+**The 8 GB OOM risk is closed.** Peak RSS never exceeded 320 MB, because sklearn's HDBSCAN
+never materialises the dense 64k x 64k matrix that `metric="cosine"` would have forced
+(decision 26). Cost is time, not memory.
+
+### Not measured, and therefore not adopted: PCA
+
+An attempt to measure PCA's quality cost returned ARI 0.018 between full-dimension and PCA-128
+labelings — apparent total disagreement. **That number is discarded, not reported as a finding.**
+The synthetic data was 69% noise with no real cluster structure, so both runs were clustering
+random points, and two clusterings of noise agree at chance. The benchmark measured *time*
+validly and *quality* not at all.
+
+So `--pca` stays off. PLAN.md section 9 is explicit that an `UNMEASURED` compromise blocks the
+phase introducing it, and this one is not merely cosmetic: **the sampler uses the bootstrap
+cluster as its stand-in for identity** when enforcing the per-person-per-day and per-person caps
+and when detecting cross-era identities. Degrading it degrades gold-set composition, which is
+exactly the silent, undetectable failure the caps exist to prevent. Calling this step
+"throwaway" earlier in the log was too glib — it is throwaway as an *output*, not as an *input*.
+
+With 63,878 real embeddings now on disk, the comparison can be done properly: run full
+dimension, then PCA, and compare ARI on real vectors. That would earn a register entry.
+
+### Next
+- `bootstrap_cluster.py` at full dimension, overnight, ~2–4 h.
+- Then `sample_gold_set.py`, which is expected to fail its composition report on the first run.
+
+---
+
 ## 2026-09-16 — Correction: the parity FAIL was the harness, not the pipeline
 
 **Phase:** 1  **Machine:** linux (run) / mac (diagnosis)  **Status:** done
