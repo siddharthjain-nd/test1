@@ -18,6 +18,111 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-11 — Gold-set pipeline: embed, cluster, sample, label, export
+
+**Phase:** 1  **Machine:** mac (written and tested here; runs on linux)  **Status:** done, ready to run
+
+### Did
+Built the entire remaining automated half of Phase 1. Five new stages, six new scripts:
+
+| Stage | Module | Script |
+|---|---|---|
+| Embed 63,878 crops (MobileFaceNet) | `embed.py` | `embed_faces.py` |
+| Bootstrap clustering | `cluster.py` | `bootstrap_cluster.py` |
+| Stratified sampling + composition report | `sampling.py` | `sample_gold_set.py` |
+| Keyboard grid labelling UI | `labelui.py` | `label_gold_set.py` |
+| Freeze to `labels.csv` | — | `export_gold_set.py` |
+| Preprocessing arbitration | — | `verify_embedding_parity.py` |
+
+Schema v4 adds `face_embeddings`, `bootstrap_clusters`, `gold_candidates`, `gold_labels`.
+All additive, so existing databases migrate on open without a rescan.
+
+46 new tests (**106 total**). `ruff`, `ruff format`, `mypy`, `pytest` all green.
+
+### Measured — the normalisation conflict is real but numerically irrelevant
+
+`configs/baseline.yaml` said `scale: 127.5`; **CONTEXT.md rule 6 says `/128.0`**. InsightFace's
+reference `ArcFaceONNX` uses 127.5. Rather than pick a side from documentation, both were run
+against the real sample photograph:
+
+| Crop | Cosine similarity | Distance |
+|---|---|---|
+| 0–5 | 0.999997–0.999998 | 1.7e-06 – 3.1e-06 |
+
+**Worst cosine distance 3.1e-06 — 300x below the 1e-3 parity tolerance.** The two constants are
+interchangeable in practice. The code follows 127.5 anyway, because matching the reference
+implementation exactly is what makes the upstream parity test meaningful. CONTEXT.md rule 6
+corrected to say so.
+
+This does **not** discharge the preprocessing risk. Channel order and layout are still unverified
+against upstream; only `verify_embedding_parity.py` with the `insightface` package installed can
+close that, and it exits non-zero rather than skipping when the package is absent. A check that
+silently passes when it did not run is worse than no check — the face-pool tests already made
+that mistake once with `/tmp`.
+
+### Measured — end-to-end smoke test
+
+Real detect → align → embed on the sample photograph, then a 240-face synthetic corpus through
+cluster → sample → label:
+
+- Embeddings L2-normalised to 1.000000, self-similarity 1.000000, **distinct faces mean +0.065 /
+  max +0.200** — genuinely discriminative, not noise.
+- Re-running the identical batch returns byte-identical vectors. Determinism holds.
+- Clustering recovered **all 12 planted identities**, 13.8% noise (the planted strangers).
+- Sampler landed size 14/25/38/23 against a 10/25/40/25 target, kind 66/34 against 67/33,
+  filtered 88/12 exactly. Per-cluster cap held at 17 of a permitted 70.
+- Label queue drains cluster → leftovers → done, and **the noise bucket is genuinely reached**.
+
+The first smoke run failed its own noise assertion. The cause was the test, not the code: the
+synthetic corpus clustered perfectly, so no noise bucket existed to serve. Planting unclusterable
+faces fixed it. Worth recording because a test that cannot fail proves nothing.
+
+### Decided
+
+- **Labelling UI on the standard library's `http.server`, not FastAPI.** FastAPI and uvicorn are
+  absent from `requirements.lock.txt`, and that lock file must stay identical on both machines or
+  embeddings drift. Adding two dependencies plus their transitive tree for a single-user localhost
+  tool is a real cost against no benefit. Phase 7 can swap the transport; the frontend and the
+  label semantics are the parts worth keeping, and they carry over unchanged. Binds to 127.0.0.1.
+- **Euclidean distance on L2-normalised vectors, not `metric="cosine"`.** Squared Euclidean is
+  `2 - 2*cos` on unit vectors — a monotonic function of cosine, so clusters are identical — but it
+  lets sklearn use a tree instead of materialising a dense 64k x 64k distance matrix. That matrix
+  is **32 GB**; the target machine has 8 GB. PCA is available via `--pca` but **off by default**:
+  measure before optimising.
+- **Caps are applied by trimming the pool before quota filling**, not as a constraint inside the
+  greedy loop. That makes the per-person-per-day and per-person caps a guarantee rather than a
+  best effort, and keeps selection deterministic.
+- **The sampler exits non-zero when its composition report misses.** A gold set whose strata were
+  assumed rather than verified produces confident numbers about the wrong population, and the
+  error is undetectable once labelling starts.
+
+### Fixed: config drift
+
+`configs/baseline.yaml` still described the pipeline that was *planned*, not the one that **ran**:
+`det_500m.onnx` and a 1280px decode cap, against the `det_10g.onnx` at 2048px the face pool was
+actually built with (decisions 21/22; C4 superseded, C5 withdrawn). Since "all tunables live in
+YAML, never hardcoded" is a project rule and Phase 2 onward reads this file, the config was
+actively misdescribing the 63,878 faces already on disk. Corrected, with the decision numbers
+referenced inline.
+
+### Problems / surprises
+
+- **`_person_sort_key` sorted lexically at first**, so `person_10` fell between `person_1` and
+  `person_2` in the merge prompt. During labelling that makes an existing id easy to miss, which
+  produces a duplicate identity — and a split identity in the gold set is exactly the kind of
+  error that is invisible afterwards. Now sorted numerically, with a regression test.
+- The greedy sampler cannot hit seven marginals exactly and is not meant to. It minimises the
+  largest outstanding deficit each pick; `--tolerance` sets how much residual skew is acceptable.
+  Expect the **size** dimension to be the one that misses on the real corpus — the pool is 33.8%
+  tiny against a 10% target, because a 12px face cannot be labelled by a human at all.
+
+### Next
+- Look at the tiny bucket (`contact_sheet.py --bucket tiny`) — still the open gate on the strata.
+- Run the five commands on Linux, in order, and record the real numbers here.
+- Then `eval/metrics.py` and `run_experiment.py`, which are all that remain of Phase 1.
+
+---
+
 ## 2026-09-06 — Face pool built on the real corpus
 
 **Phase:** 1  **Machine:** linux  **Status:** done

@@ -50,20 +50,26 @@ which changes embeddings, which makes experiment results incomparable.
 
 ---
 
-## 4. Current state (2026-09-06)
+## 4. Current state (2026-09-11)
 
-**Phase 0 complete. Phase 1 in progress.**
+**Phase 0 complete. Phase 1 in progress — every automated step is built; the human
+labelling pass is what remains.**
 
 | Step | Status |
 |---|---|
 | Repo, env, model download + checksum lock | done |
 | Corpus scan, dedup, classification, date recovery | done |
-| Face pool: detect + align + attributes | **done** |
-| Embeddings | next |
-| Bootstrap clustering | not started |
-| Stratified sampler | not started |
-| Labelling UI | not started |
+| Face pool: detect + align + attributes | done |
+| Embeddings (MobileFaceNet) | **code done, not yet run on the corpus** |
+| Bootstrap clustering | **code done, not yet run** |
+| Stratified sampler + composition report | **code done, not yet run** |
+| Labelling UI | **code done, not yet run** |
+| `data/gold/labels.csv` | **blocked on the human labelling pass** |
 | Evaluation harness (metrics) | not started |
+| `run_experiment.py` + results table | not started |
+
+Everything above the labelling line is automated and runs unattended. The labelling pass
+is the real bottleneck of Phase 1 — a few hundred keystrokes, not CPU time.
 
 ### Measured corpus
 
@@ -122,6 +128,14 @@ python scripts/build_face_pool.py                  # the expensive pass; resumab
 python scripts/build_face_pool.py --stats          # progress and distributions
 python scripts/contact_sheet.py --bucket tiny      # look at the crops
 
+# Gold set, in order. Each prints what to run next.
+python scripts/verify_embedding_parity.py          # run once per machine, before labelling
+python scripts/embed_faces.py                      # MobileFaceNet over the pool; resumable
+python scripts/bootstrap_cluster.py                # throwaway pre-grouping for labelling
+python scripts/sample_gold_set.py                  # stratified sample + composition report
+python scripts/label_gold_set.py                   # the only manual step; opens a browser
+python scripts/export_gold_set.py                  # freeze to data/gold/labels.csv
+
 ruff check . && ruff format --check . && mypy && pytest -q
 ```
 
@@ -145,8 +159,11 @@ Violating these silently corrupts results, so they are not stylistic preferences
 5. **Gold-set labels are evaluation ground truth only.** They never enter the pipeline. There
    is no training in the core track; PLAN.md phases 9 and 10 are default-skip.
 6. **Alignment correctness is critical and fails silently.** Preprocessing is
-   `(pixel - 127.5) / 128.0`, RGB, NCHW — not `x/255`. Verify by geometry, not by absence of
-   errors.
+   `(pixel - 127.5) / 127.5`, RGB, NCHW — not `x/255`. Verify by geometry, not by absence of
+   errors. *(Corrected 2026-09-11: this rule previously said `/128.0`. InsightFace's reference
+   `ArcFaceONNX` uses 127.5, and the two were measured to differ by 3.1e-06 cosine — 300x below
+   the parity tolerance, so the constant is not what will bite you. Channel order and layout are.
+   Run `scripts/verify_embedding_parity.py` before freezing a gold set.)*
 7. **One bad file must never abort a multi-hour run.** Record the error, continue.
 8. **Verify edits by their effect, not by a tool reporting success.** A bulk edit silently
    deleted a CLI argument once; it was caught by diffing before commit.

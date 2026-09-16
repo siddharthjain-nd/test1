@@ -26,14 +26,18 @@ ingest:
   drop_below_pixels: 10000
 
 decode:
-  # Quality Compromise Register C4. JPEG DCT-domain downscaling via Image.draft().
-  # Bounded decode for the Phase 1 bootstrap only; Phase 5 reverts the server path
-  # to full resolution. Do not raise this cap silently.
-  max_long_edge: 1280
+  # Register C4 was SUPERSEDED on 2026-09-06: the cap was raised 1280 -> 2048 because
+  # Image.draft() scales by powers of two, so the extra resolution costs almost nothing.
+  max_long_edge: 2048
   honour_exif_orientation: true
 
 detect:
-  model: "buffalo_sc/det_500m.onnx"   # Register C5; buffalo_l/det_10g.onnx from Phase 5
+  # Register C5 was WITHDRAWN, not deferred (decision 21). Detection is the only stage
+  # that needs the original photos, so a face missed here is permanently absent from the
+  # gold set, whereas embedding can be redone from the saved crops for free.
+  model: "buffalo_l/det_10g.onnx"
+  # 640, not 1024 (decision 22): measured on a real 6-face photo, 1024 found the *same*
+  # faces with *lower* confidence at 2.2x the cost.
   input_size: [640, 640]
   score_threshold: 0.5
   nms_threshold: 0.4
@@ -48,12 +52,15 @@ embed:
   model: "buffalo_sc/w600k_mbf.onnx"  # Register C6; upgraded in Phase 5
   input_size: 112
   # ArcFace preprocessing. NOT x/255 - getting this wrong silently degrades everything.
+  # 127.5 matches InsightFace's reference ArcFaceONNX. CONTEXT.md section 6 says 128.0;
+  # scripts/verify_embedding_parity.py measures the difference rather than arguing it.
   mean: 127.5
   scale: 127.5
   input_layout: "NCHW"
   channel_order: "RGB"
   l2_normalise: true
   flip_tta: false                     # Register C8
+  batch_size: 64
 
 quality:
   # Phase 3 sets real values. Nothing is gated in the baseline.
@@ -65,12 +72,55 @@ quality:
 
 cluster:
   algorithm: "hdbscan"
-  metric: "cosine"
+  # Embeddings are L2-normalised, so squared Euclidean distance is 2 - 2*cos: a monotonic
+  # function of cosine distance, giving identical clusters while letting sklearn use a
+  # tree instead of a dense 64k x 64k matrix (32 GB) that will not fit on the 8 GB box.
+  metric: "euclidean_on_normalised"
   min_cluster_size: 3
   min_samples: null
+  # Off by default. Measure before optimising (PLAN.md section 0, guiding principle 1).
+  pca_components: null
   # Phase 4 additions.
   cannot_link_same_photo: false
   time_prior: false
+
+# Phase 1 gold-set sampling. The sampler asserts these targets and fails when it misses,
+# so the mix is verified rather than assumed.
+sample:
+  target_size: 1800
+  # One person with 500 faces contributes ~125,000 pairs and owns the metric outright;
+  # 20 burst frames contribute 190 trivially-easy pairs. Identity is unknown at sampling
+  # time, so the bootstrap cluster stands in for it.
+  per_cluster_per_day: 3
+  per_cluster_total: 70
+  # PLAN.md: "The noise/rejected bucket must be reviewed too." Reviewing only confident
+  # clusters yields a gold set of exactly the faces the baseline already finds easy.
+  noise_review_share: 0.10
+  detector_fp_count: 50
+  cross_era_bonus: 0.5
+  tolerance: 0.05
+  # Measured: 2,163 images (~12% of candidates) from a retouching app. These filters alter
+  # face geometry, which is precisely what the embedding encodes.
+  beauty_marker: "You cam perfect"
+
+  targets:
+    # Deliberately unlike the corpus: the pool is 33.8% tiny, but a 12px face cannot be
+    # labelled by a human at all. Tiny faces are still included so gating can be measured.
+    size:     { tiny: 0.10, small: 0.25, medium: 0.40, large: 0.25 }
+    # Corpus is 48/31/21. PLAN.md targets 55/30/15; DEVLOG argues the strata should follow
+    # the corpus. Left at the plan of record - changing it is a decision to be logged.
+    pose:     { frontal: 0.55, semi: 0.30, profile: 0.15 }
+    era:      { oldest: 0.35, middle: 0.25, recent: 0.35, undated: 0.05 }
+    kind:     { photo: 0.67, forwarded: 0.33 }
+    filtered: { plain: 0.88, beauty: 0.12 }
+    group:    { solo: 0.85, group: 0.15 }
+    quality:  { good: 0.60, marginal: 0.25, bad: 0.15 }
+
+gold:
+  labels_csv: "data/gold/labels.csv"
+  ui_port: 8765
+  # Localhost only. These crops are biometric data and the server has no authentication.
+  ui_host: "127.0.0.1"
 
 runtime:
   execution_provider: "CPUExecutionProvider"  # never CoreML/CUDA for stored embeddings

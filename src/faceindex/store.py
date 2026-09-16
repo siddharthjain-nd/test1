@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Bumped when the scanner's classification or metadata extraction changes in a way that
 # invalidates previously stored rows. Raising it forces a rescan of every file.
@@ -124,6 +124,61 @@ CREATE TABLE IF NOT EXISTS photo_pool_status (
     error        TEXT,
     processed_at TEXT NOT NULL
 );
+
+-- Embeddings are biometric templates, not "just floats" (PLAN.md section 3). They live in
+-- the gitignored database and are never logged.
+--
+-- platform and onnxruntime_version are stored per row because arm64 and x86_64 do not
+-- agree bit-for-bit; without them, two machines' embeddings are silently incomparable.
+CREATE TABLE IF NOT EXISTS face_embeddings (
+    face_id       INTEGER PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE,
+    embedding     BLOB    NOT NULL,   -- float32 little-endian, L2-normalised
+    dim           INTEGER NOT NULL,
+    model         TEXT    NOT NULL,
+    embed_version TEXT    NOT NULL,
+    platform      TEXT    NOT NULL,
+    onnxruntime_version TEXT NOT NULL,
+    flip_tta      INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_version ON face_embeddings(embed_version);
+
+-- Throwaway pre-grouping used only to make labelling fast (Register C6). Never an output.
+CREATE TABLE IF NOT EXISTS bootstrap_clusters (
+    face_id     INTEGER PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE,
+    cluster_id  INTEGER NOT NULL,     -- -1 means noise
+    probability REAL,
+    run_id      TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bootstrap_cluster ON bootstrap_clusters(cluster_id);
+CREATE INDEX IF NOT EXISTS idx_bootstrap_run     ON bootstrap_clusters(run_id);
+
+-- The stratified sample chosen for human labelling.
+CREATE TABLE IF NOT EXISTS gold_candidates (
+    face_id           INTEGER PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE,
+    stratum           TEXT    NOT NULL,   -- JSON of the categorical cell it filled
+    bootstrap_cluster INTEGER,
+    reserved_for      TEXT,               -- noise_review | detector_fp | NULL
+    sample_run        TEXT    NOT NULL,
+    created_at        TEXT    NOT NULL
+);
+
+-- Human ground truth. EVALUATION ONLY -- never read by the pipeline (PLAN.md decision 7).
+CREATE TABLE IF NOT EXISTS gold_labels (
+    face_id     INTEGER PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE,
+    -- person | not_of_interest | non_face | unsure
+    label       TEXT    NOT NULL,
+    -- Arbitrary and display-free: person_1, person_2... Shuffling them changes nothing.
+    person_id   TEXT,
+    occlusion   TEXT,
+    labelled_at TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_gold_labels_person ON gold_labels(person_id);
+CREATE INDEX IF NOT EXISTS idx_gold_labels_label  ON gold_labels(label);
 """
 
 # Columns added after the first release, applied to existing databases on open.

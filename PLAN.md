@@ -412,9 +412,12 @@ photos, that is a finding, not a bug to hide.
 **Deliverables**
 - [x] `scripts/scan_corpus.py` — dedup by content hash, classify and drop screenshots/documents/memes
 - [x] `scripts/build_face_pool.py` — detect + align over the **entire** corpus, auto-derive per-face attributes
-- [ ] `scripts/sample_gold_set.py` — stratified sampler + **composition report asserting the targets above**
-- [ ] Keyboard-driven grid labelling tool (accept-cluster / pull-out / four label keys); must also surface the noise bucket
-- [ ] `data/gold/labels.csv` with **~1,800 labelled faces across 25–35 identities**
+- [x] `scripts/embed_faces.py` — MobileFaceNet bootstrap embedding, resumable (Register C6)
+- [x] `scripts/bootstrap_cluster.py` — throwaway HDBSCAN pre-grouping for the labelling UI
+- [x] `scripts/sample_gold_set.py` — stratified sampler + **composition report asserting the targets above**
+- [x] Keyboard-driven grid labelling tool (accept-cluster / pull-out / four label keys); must also surface the noise bucket
+- [x] `scripts/verify_embedding_parity.py` — preprocessing parity against the reference implementation
+- [ ] `data/gold/labels.csv` with **~1,800 labelled faces across 25–35 identities** — *tooling done (`export_gold_set.py`); awaits the human labelling pass*
 - [ ] `src/faceindex/eval/metrics.py` implementing:
   - Pairwise Precision / Recall / F1
   - BCubed Precision / Recall / F1
@@ -822,7 +825,11 @@ photos, that is a finding, not a bug to hide.
 | 21 | Face pool detector | **SCRFD-10G at 640px**, not 500M | Detection is the only stage needing the originals, so a missed face is permanently absent from the gold set. Embedding can be redone from crops for free. 15 mAP points on hard faces | 2026-09-06 | Never for the pool build |
 | 22 | Detector input size | 640, not 1024 | Measured on a real 6-face photo: 1024 found the *same* faces with *lower* scores at 2.2× the cost | 2026-09-06 | Small-face recall proves inadequate |
 | 23 | Test assets | Sample photograph downloaded to gitignored `data/test_assets/` | Detection cannot be tested on synthetic images, and committing photos of real people to a public repo is unacceptable | 2026-09-06 | |
-| 24 | | | | | |
+| 24 | ArcFace normalisation constant | `(x - 127.5) / 127.5`, matching InsightFace's reference `ArcFaceONNX` | CONTEXT.md said 128.0. **Measured on real crops: the two differ by 3.1e-06 cosine, 300x below the 1e-3 parity tolerance** — numerically interchangeable. 127.5 is kept because matching the reference exactly is what makes the upstream parity test meaningful | 2026-09-11 | Never; pinned by golden-value test |
+| 25 | Labelling UI transport | Standard library `http.server`, not FastAPI | FastAPI/uvicorn are absent from `requirements.lock.txt`, which must stay identical on both machines. Two dependencies plus a transitive tree for a single-user localhost tool is cost without benefit. Phase 7 may swap the transport; the frontend and label semantics carry over | 2026-09-11 | Phase 7 needs real concurrency or auth |
+| 26 | Bootstrap cluster metric | Euclidean on L2-normalised vectors, not `metric="cosine"` | Squared Euclidean is `2 - 2*cos` on unit vectors, so clusters are identical, but it avoids materialising a dense 64k x 64k distance matrix — **32 GB against an 8 GB target machine** | 2026-09-11 | Embeddings ever stored un-normalised |
+| 27 | Sampler cap enforcement | Trim the pool before quota filling, not inside the greedy loop | Makes per-person-per-day and per-person caps a guarantee rather than a best effort, and keeps selection deterministic | 2026-09-11 | |
+| 28 | | | | | |
 
 ---
 
