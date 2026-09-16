@@ -18,6 +18,70 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-16 — Correction: the parity FAIL was the harness, not the pipeline
+
+**Phase:** 1  **Machine:** linux (run) / mac (diagnosis)  **Status:** done
+
+### What happened
+`verify_embedding_parity.py` reported **FAIL, worst cosine distance 7.74e-02** against a
+1e-3 tolerance — 77x over. Taken at face value that condemns every embedding in the project.
+
+It was wrong. **The pipeline is correct; the verification script was not.**
+
+### Diagnosis
+The run itself contained the first clue: `/127.5` and `/128.0` gave *identical* distance to
+the reference (6.06e-02 vs 6.06e-02). A normalisation error would have moved them apart, so
+the constant was exonerated immediately and only channel order or layout remained.
+
+InsightFace's `ArcFaceONNX.get_feat()` calls `cv2.dnn.blobFromImages(..., swapRB=True)`. It is
+built around `cv2.imread`, so it expects **BGR** and performs the swap to RGB itself. The script
+handed it RGB, which it dutifully swapped to BGR — so the reference embedded channel-swapped
+faces while ours embedded correct ones.
+
+Confirmed by prediction rather than by argument. If the cause is a red/blue swap, then
+`distance(ours_RGB, ours_BGR)` computed entirely within our own code must reproduce the
+reported figures:
+
+| Crop | ours_RGB vs ours_BGR | parity reported vs insightface |
+|---|---|---|
+| 0 | 6.03e-02 | 6.06e-02 |
+| 1 | 7.16e-02 | 7.20e-02 |
+| 2 | 7.78e-02 | 7.74e-02 |
+| 3 | 4.35e-02 | 4.34e-02 |
+| 4 | 6.66e-02 | 6.61e-02 |
+
+Three significant figures on all five crops. The mismatch is exactly one channel swap.
+
+### Also checked: the detector, because it processed all 63,878 faces
+`detect.py` passes `image_rgb` straight to the model with no swap; InsightFace's SCRFD reaches
+the same place via `blobFromImage(swapRB=True)` on BGR. Both deliver RGB to the network, so
+**the existing face pool is unaffected** and does not need rebuilding.
+
+### Fixed
+- `reference.get_feat()` is now fed BGR, with a comment explaining why, because this will
+  otherwise be re-broken by the next person who assumes RGB in, RGB out.
+- The parity table gained a **control column** that deliberately feeds RGB into `get_feat`.
+  A correct setup now shows a small first column *and* a large last one, so the script
+  diagnoses a mismatch instead of merely announcing one.
+- `f.interocular_px()` -> `f.interocular_px`. It is a property; calling it raised TypeError.
+
+### The lesson worth keeping
+Every safeguard in CONTEXT.md section 6 is aimed at the silent *false negative* — a check that
+passes when it should not. This was the opposite: a **false alarm** from an unverified verifier.
+Both cost the same amount of trust. The verification harness needs a control case proving it
+can tell right from wrong, or "FAIL" is just an unvalidated claim. Rule 8 — verify by effect,
+not by a tool reporting a result — applies to tools reporting *failure* too.
+
+### Open question: the two machines are not running the same code
+The Linux run did not crash on `f.interocular_px()`, which is a `@property` in the committed
+`detect.py` and raises TypeError when called. It therefore cannot be the committed file. Nothing
+in this session has been committed, so the Linux copy arrived out-of-band and has diverged.
+CONTEXT.md section 3 requires both machines to run identical code, or results stop being
+comparable. **Confirm with `git log --oneline -1` and `git status` on both before the embedding
+pass runs.**
+
+---
+
 ## 2026-09-11 — Gold-set pipeline: embed, cluster, sample, label, export
 
 **Phase:** 1  **Machine:** mac (written and tested here; runs on linux)  **Status:** done, ready to run

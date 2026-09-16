@@ -71,7 +71,7 @@ def load_reference_crops() -> np.ndarray:
         console.print(f"[red]Only {len(faces)} faces in the sample photo.[/red]")
         raise SystemExit(1)
 
-    faces = sorted(faces, key=lambda f: -f.interocular_px())[:N_GOLDEN]
+    faces = sorted(faces, key=lambda f: -f.interocular_px)[:N_GOLDEN]
     return np.stack([align.align_face(image, face.landmarks) for face in faces])
 
 
@@ -140,22 +140,43 @@ def main() -> int:
 
     reference = get_model(str(model_path))
     reference.prepare(ctx_id=-1)
-    reference_vectors = np.stack([reference.get_feat(crop) for crop in crops]).reshape(
-        len(crops), -1
-    )
-    reference_vectors = embed.l2_normalise(reference_vectors.astype(np.float32))
+
+    # insightface's get_feat() calls cv2.dnn.blobFromImages(..., swapRB=True). It is built
+    # around cv2.imread, so it expects **BGR** and swaps to RGB itself. Our crops are RGB,
+    # so they must be flipped on the way in or the reference silently embeds a
+    # channel-swapped face -- which looks exactly like a preprocessing bug in our code.
+    #
+    # Both orders are measured rather than assumed, so this script diagnoses the mismatch
+    # instead of merely reporting one. Feeding BGR is what makes the two pipelines agree.
+    def reference_feat(batch: np.ndarray) -> np.ndarray:
+        vectors = np.stack([reference.get_feat(crop) for crop in batch]).reshape(len(batch), -1)
+        return embed.l2_normalise(vectors.astype(np.float32))
+
+    reference_vectors = reference_feat(np.ascontiguousarray(crops[:, :, :, ::-1]))
+    reference_rgb_in = reference_feat(crops)
 
     parity = Table(title="Parity vs insightface reference", header_style="bold")
     parity.add_column("Crop", justify="right")
     parity.add_column("ours /127.5", justify="right")
     parity.add_column("alt /128.0", justify="right")
+    parity.add_column("RGB fed to get_feat", justify="right")
     worst_ours = 0.0
+    worst_swapped = 0.0
     for index in range(len(crops)):
         d127 = 1 - cosine(vectors_127[index], reference_vectors[index])
         d128 = 1 - cosine(vectors_128[index], reference_vectors[index])
+        dswap = 1 - cosine(vectors_127[index], reference_rgb_in[index])
         worst_ours = max(worst_ours, d127)
-        parity.add_row(str(index), f"{d127:.2e}", f"{d128:.2e}")
+        worst_swapped = max(worst_swapped, dswap)
+        parity.add_row(str(index), f"{d127:.2e}", f"{d128:.2e}", f"{dswap:.2e}")
     console.print(parity)
+
+    console.print(
+        f"\nThe last column is the control: it feeds RGB straight into get_feat, so the "
+        f"reference swaps it to BGR. It should be ~{worst_swapped:.0e} -- large, and roughly "
+        f"the size of a red/blue channel swap. If the first column is small and the last is "
+        f"large, both pipelines agree and the harness is wired correctly."
+    )
 
     if worst_ours < args.tolerance:
         console.print(
