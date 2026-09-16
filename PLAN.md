@@ -840,7 +840,7 @@ photos, that is a finding, not a bug to hide.
 | Bad gold set → all conclusions wrong | Critical | Label carefully once; hold out a slice by identity; over-sample hard cases |
 | **Duplicates / burst shots inflate metrics** | Critical, silent | Dedup by content hash; cap faces per person per day and per person overall; track BCubed alongside pairwise |
 | Gold set confined to one era → cross-age drift untested | Critical, silent | Sample across all eras; require ≥10 cross-era identities |
-| Preprocessing mismatch (RGB/BGR, normalisation) | Critical, silent | Parity-test against reference `insightface` output on day one |
+| ~~Preprocessing mismatch (RGB/BGR, normalisation)~~ | ~~Critical, silent~~ | **CLOSED on linux 2026-09-16.** `verify_embedding_parity.py` measures **0.00e+00 cosine distance** to the reference — bit-exact — with a control column at 6–7e-02 proving the check can detect a mismatch. Pinned by a golden-value test. Re-run per machine; arm64/x86_64 agree to ~1e-4, not exactly |
 | **arm64/x86_64 numerical drift between dev and run machines** | High, silent | CPU EP only for stored embeddings; pinned versions; cross-machine parity test in CI; record platform per row |
 | Model download links rot | High | Mirror + checksum everything in Phase 0 |
 | Overfitting to your own 30 people (Phases 8–9) | High | Always evaluate on held-out identities and a general benchmark |

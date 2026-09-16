@@ -65,6 +65,41 @@ the same place via `blobFromImage(swapRB=True)` on BGR. Both deliver RGB to the 
   diagnoses a mismatch instead of merely announcing one.
 - `f.interocular_px()` -> `f.interocular_px`. It is a property; calling it raised TypeError.
 
+### Verified — parity is now bit-exact
+
+Re-run on Linux after the fix:
+
+| Crop | ours /127.5 | alt /128.0 | control (RGB into get_feat) |
+|---|---|---|---|
+| 0 | **0.00e+00** | 1.61e-06 | 6.06e-02 |
+| 1 | -1.19e-07 | 2.26e-06 | 7.20e-02 |
+| 2 | **0.00e+00** | 2.26e-06 | 7.74e-02 |
+| 3 | **0.00e+00** | 2.26e-06 | 4.34e-02 |
+| 4 | **0.00e+00** | 2.92e-06 | 6.61e-02 |
+
+**PASS. Worst cosine distance 0.00e+00** — not "within tolerance" but bit-identical to the
+reference, with the single -1.19e-07 being float rounding. The control column stays at 6-7e-02,
+so the harness demonstrably distinguishes right from wrong rather than passing everything.
+
+Four things are proven at once: **RGB channel order, NCHW layout, `(x - 127.5) / 127.5`
+normalisation, and no hidden resize or interpolation difference.** The register's highest-rated
+silent risk — "preprocessing mismatch, critical, silent" — is closed on the Linux box. It must be
+run once per machine; arm64 and x86_64 will agree to ~1e-4, not exactly.
+
+### Added: golden-value regression test
+
+Parity proves preprocessing is correct *today*; it says nothing about tomorrow. `tests/
+test_golden_embeddings.py` re-embeds the five fixed crops and fails if they drift beyond 1e-4,
+which is the PLAN.md section 3 deliverable. Generate the baseline with
+`verify_embedding_parity.py --write-golden`, which deliberately refuses to run until reference
+parity has passed — pinning unverified values would lock in whatever bug was present.
+
+**Caught while writing it: the baseline was going to be written into `tests/`, and therefore
+committed.** Those vectors are embeddings of a real person's face. CONTEXT.md is explicit that
+embeddings are biometric templates, not "just floats", and this repository is intended to be
+public, so that would have been an irreversible leak of exactly the kind `.gitignore` exists to
+prevent. Moved to gitignored `data/`, which also suits it being platform-specific and per-machine.
+
 ### The lesson worth keeping
 Every safeguard in CONTEXT.md section 6 is aimed at the silent *false negative* — a check that
 passes when it should not. This was the opposite: a **false alarm** from an unverified verifier.

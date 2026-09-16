@@ -42,7 +42,11 @@ from faceindex.detect import ScrfdDetector
 
 console = Console()
 
-GOLDEN_PATH = Path(__file__).resolve().parents[1] / "tests" / "golden_embeddings.json"
+# Under gitignored data/, NOT tests/. These are embeddings of a real person's face, which
+# are biometric templates and not "just floats" -- committing them to a repository intended
+# to be public would be an irreversible leak. They are also platform-specific, since arm64
+# and x86_64 do not agree bit-for-bit, so each machine writes and checks its own.
+GOLDEN_PATH = paths.data_dir() / "golden_embeddings.json"
 N_GOLDEN = 5
 
 
@@ -192,6 +196,7 @@ def main() -> int:
         return 1
 
     if args.write_golden:
+        GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
         GOLDEN_PATH.write_text(
             json.dumps(
                 {
