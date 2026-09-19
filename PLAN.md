@@ -829,7 +829,10 @@ photos, that is a finding, not a bug to hide.
 | 25 | Labelling UI transport | Standard library `http.server`, not FastAPI | FastAPI/uvicorn are absent from `requirements.lock.txt`, which must stay identical on both machines. Two dependencies plus a transitive tree for a single-user localhost tool is cost without benefit. Phase 7 may swap the transport; the frontend and label semantics carry over | 2026-09-11 | Phase 7 needs real concurrency or auth |
 | 26 | Bootstrap cluster metric | Euclidean on L2-normalised vectors, not `metric="cosine"` | Squared Euclidean is `2 - 2*cos` on unit vectors, so clusters are identical, but it avoids materialising a dense 64k x 64k distance matrix — **32 GB against an 8 GB target machine** | 2026-09-11 | Embeddings ever stored un-normalised |
 | 27 | Sampler cap enforcement | Trim the pool before quota filling, not inside the greedy loop | Makes per-person-per-day and per-person caps a guarantee rather than a best effort, and keeps selection deterministic | 2026-09-11 | |
-| 28 | | | | | |
+| 29 | Gold-set tiny-face share | Raised 10% → 15%; small/medium/large scaled to 24/38/23 | **Contact sheet inspected 2026-09-19.** The sub-20px faces are overwhelmingly genuine — background people in group shots, plus faces inside framed photographs — not the detector false positives the 10% target assumed. They remain unidentifiable and will be gated out of cluster formation, which is exactly why enough must be present to tune that gate. Changing one evidence-backed target beats loosening `--tolerance` across all seven | 2026-09-19 | Tiny faces prove unlabellable in practice during the labelling pass |
+| 30 | Faces inside photo frames / posters | Labelled `non_face` | PLAN.md's existing `non_face` definition already covers "pattern, statue, **poster**", and a framed photograph is the same thing. Keeps wall art out of person albums. **Caveat:** if the face is genuinely a family member, the clusterer grouping it with that person is defensible behaviour that this label scores as an error. Accepted while the population is small | 2026-09-19 | Framed faces turn out to be numerous in the labelling pass |
+| 31 | Cross-era check placement | Demoted to a **warning** in the sampler; remains a hard check in `export_gold_set.py` | **Measured 2026-09-19: only 7 of 4,023 clusters (0.2%) span the oldest and newest eras, while nearest-neighbour search finds hundreds of genuine cross-era faces.** Cross-age drift is what stops one person's old and new photos from clustering together, so requiring spanning clusters asked the bootstrap to have already solved the problem the gold set is built to measure. Human labels are the only thing that can decide it | 2026-09-19 | A clusterer good enough to bridge eras replaces the bootstrap |
+| 32 | | | | | |
 
 ---
 
@@ -852,6 +855,7 @@ photos, that is a finding, not a bug to hide.
 | **Quality gating biased against low-resolution forwarded images** | High, silent | 33% of candidates are recompressed messaging images. Report gating rate and F1 separately for `forwarded`; gate on relative face size if absolute pixels prove biased |
 | **Beauty-filtered photos fail to match the same person unfiltered** | Medium | ~12% of this corpus. Sample at real share, track as a slice, measure rather than assume |
 | **EXIF tag 306 mistaken for a capture time** | Medium, silent | Ranked below filename dates; disagreement rate reported as a warning |
+| **Faces inside framed photographs carry the wrong date** | Medium, silent | Observed 2026-09-19 in the tiny bucket. A 1985 face photographed in 2020 is recorded as 2020, which feeds a false signal to the Phase 4 time prior and silently misplaces a genuine cross-era face into the "recent" stratum. Labelled `non_face` (decision 30); revisit if numerous |
 | Re-clustering destroys user labels | High | Confirmed labels are immutable anchors |
 
 ---

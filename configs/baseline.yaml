@@ -104,9 +104,11 @@ sample:
   beauty_marker: "You cam perfect"
 
   targets:
-    # Deliberately unlike the corpus: the pool is 33.8% tiny, but a 12px face cannot be
-    # labelled by a human at all. Tiny faces are still included so gating can be measured.
-    size:     { tiny: 0.10, small: 0.25, medium: 0.40, large: 0.25 }
+    # Deliberately unlike the corpus, which is 33.8% tiny. Raised 0.10 -> 0.15 on 2026-09-19
+    # (decision 29) after inspecting the contact sheet: the tiny faces are genuine -- background
+    # people and faces inside framed photographs -- not detector noise. Still unidentifiable, so
+    # still gated out of clustering in Phase 3; included so that gate can be tuned against them.
+    size:     { tiny: 0.15, small: 0.24, medium: 0.38, large: 0.23 }
     # Corpus is 48/31/21. PLAN.md targets 55/30/15; DEVLOG argues the strata should follow
     # the corpus. Left at the plan of record - changing it is a decision to be logged.
     pose:     { frontal: 0.55, semi: 0.30, profile: 0.15 }

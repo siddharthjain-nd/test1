@@ -18,6 +18,106 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-19 — The tiny-face question is answered: they are real
+
+**Phase:** 1  **Machine:** linux  **Status:** done
+
+### Answered, by looking
+
+The open question since the face pool was built — *are the 33.8% of faces under 20px genuine
+small faces, or detector false positives?* — is settled. The contact sheet was inspected.
+
+**They are overwhelmingly genuine faces.** Poor quality, but faces: background people in group
+shots, and **faces inside framed photographs** hanging in the scene.
+
+Expectation was wrong in a useful direction. A quarter to a third were assumed to be detector
+noise — fabric patterns, hands, bark — which is typical behaviour below 20px. Almost none were.
+**SCRFD-10G is more precise than assumed**, which retroactively strengthens decision 21.
+
+### What it changes
+
+**The question shifts from "is it a face?" to "is it usable?"** A 12px background stranger is a
+real face and still cannot be identified by a human or a machine, because warping 12px up to
+112px is mostly invented detail. They are still gated out of cluster formation in Phase 3 — but
+for a better-founded reason than "junk detections".
+
+**The `non_face` target of ~50 is probably unreachable from detector errors.** The sampler
+reserves the 50 lowest-confidence faces expecting false positives; if the detector barely makes
+any, those slots return real faces. That is a finding about detector quality, not a gap.
+
+**Tiny target raised 10% → 15%** (decision 29), with small/medium/large scaled to 24/38/23.
+Changing one target backed by evidence is better practice than loosening `--tolerance`, which
+would have relaxed all seven dimensions to fix the one we had actually looked at.
+
+### New risk found: framed photographs carry the wrong date
+
+A framed photo on a wall, photographed in 2020, may hold a face from 1985 — but the pipeline
+records it as 2020, because that is the containing photo's capture time. Two consequences:
+
+- **Phase 4's time prior** ("raise the merge bar as the date gap grows") would be fed false dates.
+- **The era stratification is silently corrupted.** A genuinely cross-era face is filed as
+  "recent". There is a certain irony in this given the cross-era assertion that just failed.
+
+Labelled `non_face` (decision 30), since PLAN.md's definition already names "poster" and a framed
+photograph is the same category. Logged caveat: if the face is genuinely a family member, the
+clusterer grouping it with that person is reasonable behaviour that this label scores as an
+error. Accepted while the population is small.
+
+### Also verified the same day: the clusters are coherent
+
+`--cluster-overview` was inspected. **Faces within a row are correctly grouped, and dates span
+a real time range within rows.** This is the reassurance the phase most needed: accept-a-whole-
+cluster labelling is viable, which is the assumption the "few hundred keystrokes" estimate rests
+on entirely. Until now nobody had confirmed a single one of the 4,023 piles held one person.
+
+### Measured: cross-era supply vs sight
+
+| Era | Faces | Share |
+|---|---|---|
+| oldest | 21,742 | 34.0% |
+| middle | 29,591 | 46.3% |
+| recent | 11,627 | 18.2% |
+| undated | 918 | 1.4% |
+
+**Sight: 7 of 4,023 clusters (0.2%) span oldest+recent.**
+
+Supply, by best cross-era neighbour among 8,000 recent faces: 65.3% of oldest faces reach 0.30,
+29.6% reach 0.35, 13.6% reach 0.40, 5.4% reach 0.50, 2.3% reach 0.60. Median 0.319, max 0.721.
+
+**The headline figure is inflated and the script now says so.** Taking the best of 8,000
+candidates raises the score even when nothing matches, which is why the median sits at 0.319
+rather than near zero — the "1,087 faces above 0.40" is largely coincidence. The *shape* is
+still informative: the collapse from 65% at 0.30 to 2.3% at 0.60 means the tail is doing real
+work, since a 0.60 cosine between two different people is hard to produce even taking the best
+of 8,000 tries. Hundreds of genuine cross-era faces, not eleven hundred.
+
+A chance baseline was added to the diagnostic: the same search repeated against progressively
+larger candidate pools. A coincidental statistic keeps climbing with pool size; a real match was
+already there at small N. Anything flat is signal.
+
+### Decided: the cross-era check moves (decision 31)
+
+Demoted to a **warning** in the sampler, kept as a hard check in `export_gold_set.py`. The
+numbers make the case: the bootstrap sees 0.2% of what exists, because cross-age drift is
+precisely what splits a person across clusters — the failure this project was built to measure.
+Asking the sampler to enforce it is asking the clusterer to have already solved it.
+
+This is not a check being deleted because it was inconvenient. Cross-era identities are still
+required; they are simply discovered during labelling, when one `person_id` is assigned across
+several clusters, and verified afterwards against real labels. The export failure message now
+says how to fix a shortfall: label more faces of already-identified people from the era they are
+missing from, rather than resampling.
+
+**A limitation worth stating plainly.** Neighbour search finds the *easy* cross-era pairs —
+people who changed little. A child photographed at 4 and at 18 scores low and is invisible to
+it, while being the single most valuable face the gold set could hold. No pre-labelling signal
+can find those. Only a human can, which is the whole argument for where this check belongs.
+
+### Next
+- Re-run the sampler against the revised targets. It should now pass.
+
+---
+
 ## 2026-09-16 — Embeddings built; bootstrap clustering cost measured
 
 **Phase:** 1  **Machine:** linux (embed) / mac (benchmark)  **Status:** embed done

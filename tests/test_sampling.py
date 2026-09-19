@@ -156,11 +156,26 @@ def test_composition_report_flags_a_skewed_sample() -> None:
     assert any("size/tiny" in failure for failure in report.failures)
 
 
-def test_composition_report_requires_cross_era_identities() -> None:
-    """Cross-age drift is the worst failure mode; below 10 identities it is untestable."""
+def test_cross_era_shortfall_warns_but_does_not_block() -> None:
+    """Measured on the real corpus: only 7 of 4,023 clusters span eras.
+
+    Cross-age drift is exactly what stops one person's old and new photos from clustering
+    together, so demanding spanning clusters asks the bootstrap to have already solved the
+    problem the gold set exists to measure. It must not block sampling. The real check runs
+    in export_gold_set.py against human labels.
+    """
     selected = [make_candidate(i, cluster_id=i % 3) for i in range(100)]
     report = sampling.composition_report(selected, sampling.SampleConfig())
-    assert any("cross-era" in failure for failure in report.failures)
+
+    assert any("span" in warning for warning in report.warnings)
+    assert not any("span" in failure for failure in report.failures)
+
+
+def test_strata_failures_still_block() -> None:
+    """Demoting the cross-era check must not have softened the checks that do work."""
+    selected = [make_candidate(i, size="tiny") for i in range(100)]
+    report = sampling.composition_report(selected, sampling.SampleConfig())
+    assert not report.passed
 
 
 def test_mark_cross_era_detects_spanning_clusters() -> None:

@@ -152,8 +152,12 @@ def validate(rows: list[dict[str, object]]) -> list[str]:
     cross_era = [p for p, seen in eras.items() if {"oldest", "recent"} <= seen]
     if len(cross_era) < 10:
         problems.append(
-            f"only {len(cross_era)} identities appear in both the oldest and most recent "
-            f"eras; PLAN.md requires >=10. Cross-age drift is untestable below that."
+            f"only {len(cross_era)} identities appear in both the oldest and most recent eras; "
+            f"PLAN.md requires >=10. Cross-age drift is untestable below that, and it is the "
+            f"system's worst failure mode. This is the only place the requirement can be "
+            f"checked -- the bootstrap clustering cannot see cross-era identities by "
+            f"construction. To fix: pick people you have already labelled and label a few more "
+            f"of their faces from the era they are missing from, rather than resampling."
         )
 
     return problems

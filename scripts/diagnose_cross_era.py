@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """Is there enough cross-era material in the pool, and can clustering see it?
 
-The sampler asserts that >=10 bootstrap clusters span the oldest and newest eras. That
-assertion may be unsatisfiable by construction: cross-age drift is exactly what stops one
-person's old and new photos from clustering together, so requiring a cluster to span eras
-asks the bootstrap to have already solved the problem the gold set exists to measure.
-
-This separates the two possibilities:
+Separates two things that a single failing assertion cannot distinguish:
 
   supply  -- how many people plausibly appear in both eras at all
   sight   -- how many of those the bootstrap clustering can actually see
 
 Cluster membership answers "sight". Nearest-neighbour similarity across the era boundary
-answers "supply", because two photos of one person 14 years apart may sit well below the
-clustering threshold while still being far more similar than two strangers.
+answers "supply", because two photos of one person years apart may sit well below the
+clustering threshold while still resembling each other far more than two strangers do.
+
+Measured on this corpus (2026-09-19): sight = 7 of 4,023 clusters, supply = hundreds of
+faces. The gap is the bootstrap's blindness to cross-age drift, which is the very failure
+the gold set is being built to measure -- so the sampler's cross-era check was demoted to a
+warning and the real check left in export_gold_set.py, where human labels decide.
+
+**Read the chance baseline before trusting the supply numbers.** Taking the best match out
+of N candidates inflates the score even when nothing matches, so the bulk of the
+distribution is coincidence. Only the tail is evidence.
 
 Usage
     python scripts/diagnose_cross_era.py
@@ -127,7 +131,7 @@ def main() -> int:
 
     console.print(
         "\n[bold]Supply[/bold]  best cross-era similarity per oldest-era face.\n"
-        "Random strangers sit near 0.0; the same person usually exceeds ~0.4 even years apart."
+        "Treat only the high thresholds as evidence -- see the chance baseline below."
     )
     supply = Table(header_style="bold")
     supply.add_column("Similarity >=", justify="right")
@@ -144,23 +148,72 @@ def main() -> int:
         f"max {float(best.max()):.3f}"
     )
 
-    strong = int((best >= 0.4).sum())
-    if strong >= 200:
+    # ---- Chance baseline ---------------------------------------------------------
+    #
+    # Taking the *best* of N candidates inflates the score even when no true match is
+    # present: the more faces you search, the higher the best coincidence. So a raw count
+    # above some threshold proves nothing on its own.
+    #
+    # The discriminator is how each statistic responds to N. A purely coincidental figure
+    # keeps climbing as the candidate pool grows; a genuine match was already there at
+    # small N and barely moves. Anything that stays flat is signal.
+    console.print(
+        "\n[bold]Chance baseline[/bold]  the same search against progressively larger pools.\n"
+        "Coincidence grows with the pool; a real match does not."
+    )
+    scale = Table(header_style="bold")
+    scale.add_column("Candidates searched", justify="right")
+    scale.add_column("Median best", justify="right")
+    scale.add_column(">=0.40", justify="right")
+    scale.add_column(">=0.50", justify="right")
+    scale.add_column(">=0.60", justify="right")
+
+    for fraction in (8, 4, 2, 1):
+        subset = new_matrix[:: max(1, fraction)]
+        partial = np.full(len(old_index), -1.0, dtype=np.float32)
+        for start in range(0, len(old_index), 512):
+            block = matrix[old_index[start : start + 512]]
+            partial[start : start + 512] = (block @ subset.T).max(axis=1)
+        scale.add_row(
+            f"{len(subset):,}",
+            f"{float(np.median(partial)):.3f}",
+            f"{int((partial >= 0.40).sum()):,}",
+            f"{int((partial >= 0.50).sum()):,}",
+            f"{int((partial >= 0.60).sum()):,}",
+        )
+    console.print(scale)
+
+    strong = int((best >= 0.5).sum())
+    console.print(
+        "\n[bold]Reading it[/bold]  if the median climbs steadily down that table while the "
+        ">=0.60 column barely moves, the bulk of the distribution is coincidence and only the "
+        "tail is real identity. Trust the tail, not the median."
+    )
+
+    if strong >= 100:
         console.print(
-            f"\n[green]Cross-era material exists.[/green] {strong:,} oldest-era faces have a "
-            f"plausible recent-era counterpart, but clustering only sees {len(spanning)} spanning "
-            f"clusters. The shortfall is the bootstrap's blindness to cross-age drift, not the "
-            f"library's. Requiring spanning clusters at sampling time asks the clusterer to have "
-            f"already solved the problem the gold set exists to measure -- move the check to "
-            f"export, where human labels make it meaningful."
+            f"\n[green]Cross-era material exists.[/green] {strong:,} oldest-era faces hold a "
+            f"recent-era match at >=0.50, which is hard to produce by chance. Clustering sees "
+            f"only {len(spanning)} spanning clusters. The shortfall is the bootstrap's blindness "
+            f"to cross-age drift, not the library's -- which is the very failure the gold set is "
+            f"being built to measure. Requiring spanning clusters at sampling time asks the "
+            f"clusterer to have already solved that problem, so the check belongs at export, "
+            f"where human labels make it meaningful."
         )
     else:
         console.print(
-            f"\n[yellow]Little cross-era material: only {strong:,} oldest-era faces have a "
-            f"plausible recent counterpart.[/yellow] If that holds up, the library genuinely has "
-            f"few people spanning both eras, and the >=10 requirement should be lowered to match "
-            f"reality rather than forced."
+            f"\n[yellow]Little hard evidence of cross-era people: {strong:,} faces at "
+            f">=0.50.[/yellow] Either the library genuinely has few, or MobileFaceNet cannot "
+            f"bridge the gap. Both point the same way: discover them during labelling, and lower "
+            f"the >=10 requirement if the labelled set cannot supply it."
         )
+
+    console.print(
+        "\n[dim]Caveat worth keeping in mind: this search finds the *easy* cross-era pairs -- "
+        "people who changed little. A child photographed at 4 and at 18 scores low here and is "
+        "invisible to this method, while being the single most valuable face the gold set could "
+        "contain. No pre-labelling signal can find those. Only you can, during labelling.[/dim]"
+    )
 
     return 0
 

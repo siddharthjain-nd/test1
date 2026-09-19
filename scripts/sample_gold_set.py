@@ -132,6 +132,9 @@ def main() -> int:
         report = sampling.composition_report(selected, config, tolerance=args.tolerance)
         print_report(report)
 
+        for warning in report.warnings:
+            console.print(f"\n[yellow]Note:[/yellow] {warning}")
+
         if report.failures:
             console.print("\n[red]Composition report FAILED:[/red]")
             for failure in report.failures:
