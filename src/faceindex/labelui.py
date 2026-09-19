@@ -408,13 +408,17 @@ INDEX_HTML = """<!doctype html>
   <div class="legend">
     <div class="verdict" id="v-person" tabindex="0">
       <span class="k"><kbd>Enter</kbd><span class="nm">Person</span><span class="ct" id="c-person">0</span></span>
-      <span class="sub">the faces you did NOT click</span>
+      <span class="sub">NOT clicked · <kbd>⇧Enter</kbd> for clicked</span>
       <span class="why">
         Ground truth for <b>&ldquo;these faces are the same human&rdquo;</b>. Your score is how
         well the system reproduces these groupings.<br><br>
+        <b>Enter</b> names the faces you did not click — the usual case, where the pile is one
+        person and you clicked the strays.<br>
+        <b>Shift+Enter</b> names only the faces you clicked. Use it when one pile turns out to
+        hold two people: click one of them, Shift+Enter, then Enter for the rest.<br><br>
         Reuse a name you have already used when you recognise someone again — that is how one
-        person gets joined across several piles, and it is the only way cross-era identities
-        enter the gold set.
+        person gets joined across several piles, and the only way cross-era identities enter
+        the gold set.
       </span>
     </div>
 
@@ -557,7 +561,7 @@ function updateAim() {
   const clicked = marked.size;
   $("aim").innerHTML = clicked
     ? `<span class="sel">${clicked} face(s) clicked.</span> ` +
-      `<b>n</b>, <b>x</b> or <b>u</b> labels those ${clicked}. ` +
+      `<b>n</b>/<b>x</b>/<b>u</b> or <b>Shift+Enter</b> acts on those ${clicked}. ` +
       `<b>Enter</b> makes the other ${person} one person.`
     : `Nothing clicked. <b>Enter</b> makes all ${person} one person. ` +
       `<b>n</b>, <b>x</b> or <b>u</b> labels all ${person}. ` +
@@ -636,9 +640,18 @@ async function submit(label, ids, personId) {
   }
 }
 
-async function assignPerson() {
-  const ids = personTargets();
-  if (!ids.length) { toast("Nothing left unselected to assign"); return; }
+async function assignPerson(which) {
+  // "rest" assigns the unclicked majority, "clicked" assigns just what you picked. A pile
+  // that turns out to hold two people needs both: click one person, Shift+Enter names them,
+  // Enter names whoever is left.
+  const ids = which === "clicked"
+    ? group.faces.map((f) => f.face_id).filter((id) => marked.has(id))
+    : personTargets();
+
+  if (!ids.length) {
+    toast(which === "clicked" ? "Click some faces first" : "Nothing left unclicked to assign");
+    return;
+  }
 
   const { persons, next_person_id } = await api("/api/persons");
   const known = persons.map((p) => `${p.person_id} (${p.count})`).join(", ") || "none yet";
@@ -656,7 +669,10 @@ document.addEventListener("keydown", async (event) => {
   if (!group || group.kind === "done") return;
   const key = event.key.toLowerCase();
 
-  if (event.key === "Enter") { event.preventDefault(); await assignPerson(); }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    await assignPerson(event.shiftKey ? "clicked" : "rest");
+  }
   else if (key === "a") { group.faces.forEach((f) => marked.add(f.face_id)); render(); }
   else if (key === "d") { marked.clear(); render(); }
   else if (key === "n") await submit("not_of_interest", verdictTargets());
