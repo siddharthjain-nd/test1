@@ -340,6 +340,58 @@ INDEX_HTML = """<!doctype html>
            padding:9px 16px; opacity:0; transition:opacity .25s; pointer-events:none; }
   #toast.show { opacity:1; }
   .done { text-align:center; padding:60px 20px; }
+
+  /* ---- the four verdicts, always on screen ---- */
+  .legend { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .verdict {
+    position:relative; flex:1 1 168px; min-width:168px;
+    border:1px solid var(--line); border-left:3px solid var(--edge);
+    border-radius:6px; padding:8px 11px; background:#00000018; cursor:help;
+  }
+  .verdict:hover, .verdict:focus-visible { border-color:var(--edge); outline:none; }
+  .verdict .k { display:flex; align-items:baseline; gap:7px; }
+  .verdict .nm { font-weight:600; font-size:13px; }
+  .verdict .ct {
+    margin-left:auto; font:12px ui-monospace,monospace; color:var(--muted);
+    font-variant-numeric:tabular-nums;
+  }
+  .verdict .sub { font-size:11.5px; color:var(--muted); margin-top:2px; display:block; }
+
+  .verdict .why {
+    position:absolute; z-index:20; left:0; top:calc(100% + 7px); width:320px;
+    background:var(--panel); border:1px solid var(--edge); border-radius:7px;
+    padding:11px 13px; font-size:12.5px; line-height:1.5; color:var(--fg);
+    box-shadow:0 10px 30px #0008; opacity:0; visibility:hidden; transition:opacity .14s;
+  }
+  .verdict:hover .why, .verdict:focus-visible .why { opacity:1; visibility:visible; }
+  .verdict .why b { color:var(--edge); }
+
+  #v-person  { --edge:var(--accent); }
+  #v-str     { --edge:#e8a33d; }
+  #v-non     { --edge:var(--danger); }
+  #v-unsure  { --edge:var(--muted); }
+
+  /* ---- what the next keystroke will hit ---- */
+  #aim {
+    display:block; margin-top:10px; padding:9px 13px; border-radius:6px;
+    background:#00000024; border:1px solid var(--line);
+    font-size:13px; color:var(--fg);
+  }
+  #aim b { color:var(--accent); }
+  #aim .sel { color:#e8a33d; }
+
+  figure.sel::after {
+    content:"✓"; position:absolute; top:5px; right:6px;
+    width:19px; height:19px; border-radius:50%;
+    background:var(--accent); color:#04121c;
+    font-size:12px; font-weight:700; display:grid; place-items:center;
+  }
+  figure.out::after {
+    content:"✕"; position:absolute; top:5px; right:6px;
+    width:19px; height:19px; border-radius:50%;
+    background:var(--danger); color:#1a0505;
+    font-size:11px; font-weight:700; display:grid; place-items:center;
+  }
 </style>
 </head>
 <body>
@@ -353,16 +405,62 @@ INDEX_HTML = """<!doctype html>
   <div class="row" style="margin-top:8px">
     <span class="muted" id="hint"></span>
   </div>
-  <div class="row keys" style="margin-top:8px">
-    <span><kbd>click</kbd> pull out / select</span>
-    <span><kbd>Enter</kbd> accept as person</span>
+  <div class="legend">
+    <div class="verdict" id="v-person" tabindex="0">
+      <span class="k"><kbd>Enter</kbd><span class="nm">Person</span><span class="ct" id="c-person">0</span></span>
+      <span class="sub">the faces you did NOT click</span>
+      <span class="why">
+        Ground truth for <b>&ldquo;these faces are the same human&rdquo;</b>. Your score is how
+        well the system reproduces these groupings.<br><br>
+        Reuse a name you have already used when you recognise someone again — that is how one
+        person gets joined across several piles, and it is the only way cross-era identities
+        enter the gold set.
+      </span>
+    </div>
+
+    <div class="verdict" id="v-str" tabindex="0">
+      <span class="k"><kbd>n</kbd><span class="nm">Stranger</span><span class="ct" id="c-str">0</span></span>
+      <span class="sub">real face, no album wanted</span>
+      <span class="why">
+        A genuine face you would never want an album of — background people, passers-by.<br><br>
+        <b>Without these the system is never tested on its right to call a face noise</b>, and
+        every wedding invents a dozen phantom people. The plan wants roughly 300 of them.
+      </span>
+    </div>
+
+    <div class="verdict" id="v-non" tabindex="0">
+      <span class="k"><kbd>x</kbd><span class="nm">Not a face</span><span class="ct" id="c-non">0</span></span>
+      <span class="sub">posters, statues, framed photos</span>
+      <span class="why">
+        No face is actually present in the scene: a poster, a statue, a face inside a
+        <b>framed photograph on the wall</b>, or a detector mistake.<br><br>
+        Measures whether junk propagates into someone&rsquo;s person album. Framed photos also
+        carry the wrong date — the containing photo&rsquo;s, not the face&rsquo;s.
+      </span>
+    </div>
+
+    <div class="verdict" id="v-unsure" tabindex="0">
+      <span class="k"><kbd>u</kbd><span class="nm">Unsure</span><span class="ct" id="c-unsure">0</span></span>
+      <span class="sub">cannot tell — costs nothing</span>
+      <span class="why">
+        <b>Excluded from scoring entirely.</b> Never guess: a wrong answer key marks correct
+        behaviour as failure, and nothing downstream can detect it.<br><br>
+        Use this when you only recognise someone from hair, clothes or context rather than
+        their face — the system only gets the face.
+      </span>
+    </div>
+  </div>
+
+  <span id="aim"></span>
+
+  <div class="row keys" style="margin-top:9px">
+    <span><kbd>click</kbd> mark a face as different from the rest</span>
     <span><kbd>a</kbd> all</span>
     <span><kbd>d</kbd> none</span>
-    <span><kbd>n</kbd> stranger</span>
-    <span><kbd>x</kbd> not a face</span>
-    <span><kbd>u</kbd> unsure</span>
-    <span><kbd>s</kbd> skip</span>
-    <span><kbd>t</kbd> tight/context crop</span>
+    <span><kbd>s</kbd> skip pile</span>
+    <span><kbd>t</kbd> tight / wide crop</span>
+    <span><kbd>Ctrl+Z</kbd> undo</span>
+    <span class="muted">hover a card above to see what it does to the gold set</span>
   </div>
 </header>
 <main><div class="grid" id="grid"></div></main>
@@ -390,6 +488,7 @@ async function refreshProgress() {
   $("fill").style.width = p.total ? (100 * p.done / p.total) + "%" : "0%";
   $("progress").textContent =
     `${p.done}/${p.total} labelled · ${p.n_people} people · ${p.remaining} left`;
+  updateCounts(p.by_label || {});
 }
 
 async function load() {
@@ -448,20 +547,66 @@ function render() {
     };
     grid.appendChild(fig);
   }
+  updateAim();
+}
+
+// Spell out what the next keystroke will actually affect. Without this the two meanings of
+// a click are invisible, and a bulk mislabel looks identical to the action you intended.
+function updateAim() {
+  const person = personTargets().length;
+  const clicked = marked.size;
+  $("aim").innerHTML = clicked
+    ? `<span class="sel">${clicked} face(s) clicked.</span> ` +
+      `<b>n</b>, <b>x</b> or <b>u</b> labels those ${clicked}. ` +
+      `<b>Enter</b> makes the other ${person} one person.`
+    : `Nothing clicked. <b>Enter</b> makes all ${person} one person. ` +
+      `<b>n</b>, <b>x</b> or <b>u</b> labels all ${person}. ` +
+      `Click the odd ones out first to treat them separately.`;
+}
+
+function updateCounts(byLabel) {
+  const map = {
+    "c-person": byLabel.person || 0,
+    "c-str": byLabel.not_of_interest || 0,
+    "c-non": byLabel.non_face || 0,
+    "c-unsure": byLabel.unsure || 0,
+  };
+  for (const [id, n] of Object.entries(map)) $(id).textContent = n;
 }
 
 const isCluster = () => group && group.kind === "cluster";
 
-// In a cluster, clicks mark faces that do NOT belong; everywhere else they select
-// faces that DO. Same gesture, inverted meaning, because the common case differs.
-function targetFaces() {
+// Clicking always means "this face is different from the rest of the pile". What you do
+// next decides which half you are talking about:
+//
+//   Enter  -> the faces you did NOT click become one person  (the majority case)
+//   n/x/u  -> the faces you DID click get that label         (the exceptions)
+//
+// Both readings of a click are natural, and picking the wrong one silently labels fifty
+// faces you never looked at. Earlier this applied n/x/u to the unclicked majority, which
+// is how a single blurry face turned into fifty "unsure" verdicts.
+function personTargets() {
   const ids = group.faces.map((f) => f.face_id);
   return isCluster() ? ids.filter((id) => !marked.has(id)) : ids.filter((id) => marked.has(id));
 }
 
-async function submit(label, personId) {
-  const ids = targetFaces();
+function verdictTargets() {
+  const selected = group.faces.map((f) => f.face_id).filter((id) => marked.has(id));
+  // Nothing clicked means the verdict is about the whole pile.
+  return selected.length ? selected : group.faces.map((f) => f.face_id);
+}
+
+const BULK_CONFIRM = 8;
+
+async function submit(label, ids, personId) {
   if (!ids.length) { toast("Nothing selected"); return; }
+
+  if (ids.length >= BULK_CONFIRM && !personId) {
+    const what = { not_of_interest: "stranger", non_face: "not a face", unsure: "unsure" }[label];
+    if (!confirm(`Mark ${ids.length} faces as "${what}"?\n\nClick individual faces first if you meant only some of them.`)) {
+      return;
+    }
+  }
 
   const entries = ids.map((id) => ({ face_id: id, label, person_id: personId || null }));
   const result = await api("/api/label", {
@@ -472,20 +617,39 @@ async function submit(label, personId) {
 
   if (result.error) { toast("Error: " + result.error); return; }
   lastBatch = ids;
-  toast(`${result.written} → ${personId || label}`);
-  await load();
+  toast(`${result.written} → ${personId || label}   (Ctrl+Z to undo)`);
+
+  // Drop the judged faces from the pile in place rather than reloading. One pile often
+  // holds a few strangers, a poster and one person, and that needs three verdicts -- so
+  // reloading between each would throw away your place and re-render everything you had
+  // already worked through.
+  const done = new Set(ids);
+  group.faces = group.faces.filter((f) => !done.has(f.face_id));
+  done.forEach((id) => marked.delete(id));
+
+  if (!group.faces.length) {
+    await load();
+  } else {
+    $("count").textContent = group.faces.length + " faces left in this pile";
+    render();
+    await refreshProgress();
+  }
 }
 
 async function assignPerson() {
+  const ids = personTargets();
+  if (!ids.length) { toast("Nothing left unselected to assign"); return; }
+
   const { persons, next_person_id } = await api("/api/persons");
   const known = persons.map((p) => `${p.person_id} (${p.count})`).join(", ") || "none yet";
   const answer = prompt(
-    `Person id for ${targetFaces().length} face(s).\\n\\nKnown: ${known}\\n\\n` +
-    `Enter to create ${next_person_id}, or type an existing id to merge.`,
+    `Name for ${ids.length} face(s).\\n\\nAlready used: ${known}\\n\\n` +
+    `Reuse an existing name if this is the same person — that is how one person gets ` +
+    `joined across several piles. Enter alone creates ${next_person_id}.`,
     next_person_id
   );
   if (answer === null) return;
-  await submit("person", answer.trim() || next_person_id);
+  await submit("person", ids, answer.trim() || next_person_id);
 }
 
 document.addEventListener("keydown", async (event) => {
@@ -495,9 +659,9 @@ document.addEventListener("keydown", async (event) => {
   if (event.key === "Enter") { event.preventDefault(); await assignPerson(); }
   else if (key === "a") { group.faces.forEach((f) => marked.add(f.face_id)); render(); }
   else if (key === "d") { marked.clear(); render(); }
-  else if (key === "n") await submit("not_of_interest");
-  else if (key === "x") await submit("non_face");
-  else if (key === "u") await submit("unsure");
+  else if (key === "n") await submit("not_of_interest", verdictTargets());
+  else if (key === "x") await submit("non_face", verdictTargets());
+  else if (key === "u") await submit("unsure", verdictTargets());
   else if (key === "s") { toast("Skipped"); await load(); }
   else if (key === "t") { context = !context; render(); }
   else if (key === "z" && (event.metaKey || event.ctrlKey)) {
