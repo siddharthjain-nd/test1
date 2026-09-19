@@ -60,7 +60,8 @@ def print_report(report: sampling.CompositionReport) -> None:
     summary.add_column("Value", justify="right")
     summary.add_row("Faces selected", f"{report.n_selected:,}")
     summary.add_row("Bootstrap clusters represented", f"{report.n_clusters:,}")
-    summary.add_row("Cross-era clusters (need >=10)", f"{report.n_cross_era_clusters:,}")
+    # Informational only. The >=10 requirement is checked at export, against human labels.
+    summary.add_row("Cross-era clusters (informational)", f"{report.n_cross_era_clusters:,}")
     summary.add_row("Reserved: noise review", f"{report.n_noise_review:,}")
     summary.add_row("Reserved: low-confidence detections", f"{report.n_detector_fp:,}")
     console.print(summary)
