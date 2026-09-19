@@ -434,12 +434,14 @@ INDEX_HTML = """<!doctype html>
 
     <div class="verdict" id="v-non" tabindex="0">
       <span class="k"><kbd>x</kbd><span class="nm">Not a face</span><span class="ct" id="c-non">0</span></span>
-      <span class="sub">posters, statues, framed photos</span>
+      <span class="sub">only when you are sure</span>
       <span class="why">
-        No face is actually present in the scene: a poster, a statue, a face inside a
-        <b>framed photograph on the wall</b>, or a detector mistake.<br><br>
-        Measures whether junk propagates into someone&rsquo;s person album. Framed photos also
-        carry the wrong date — the containing photo&rsquo;s, not the face&rsquo;s.
+        No face is actually present: a poster, a statue, a face inside a <b>framed photograph
+        on the wall</b>, or a detector mistake.<br><br>
+        This is a <b>positive claim that the detector was wrong</b>, and these counts are how
+        detector precision gets measured. A blurry smudge that is probably a real face is not
+        this — press <b>u</b> instead, or the detector looks worse than it is and Phase 3
+        gating gets tuned against a false picture.
       </span>
     </div>
 

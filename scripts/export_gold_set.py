@@ -117,6 +117,43 @@ def fetch_rows(conn: object) -> list[dict[str, object]]:
     return out
 
 
+def print_readability(rows: list[dict[str, object]], column: str, order: tuple[str, ...]) -> None:
+    """How often a human could not read a face, sliced by an auto-derived attribute.
+
+    This turns the `unsure` labels from a shrug into a measurement. Phase 3 has to choose a
+    quality gate, and the honest upper bound on what a *machine* should attempt is what a
+    *human* could read: if four in five of the worst-quality faces defeat you, a clusterer
+    has no business forming identities from them. Those thresholds are otherwise guesswork.
+    """
+    present = [r for r in rows if r.get(column)]
+    if not present:
+        return
+
+    table = Table(title=f"Human readability by {column.replace('_', ' ')}", header_style="bold")
+    table.add_column(column.replace("_bucket", ""))
+    table.add_column("Faces", justify="right")
+    table.add_column("Named", justify="right")
+    table.add_column("Stranger", justify="right")
+    table.add_column("Not a face", justify="right")
+    table.add_column("Unreadable", justify="right")
+
+    buckets = [b for b in order if any(str(r[column]) == b for r in present)]
+    for bucket in buckets:
+        group = [r for r in present if str(r[column]) == bucket]
+        counts = Counter(str(r["label"]) for r in group)
+        unreadable = counts["unsure"] / len(group)
+        colour = "red" if unreadable > 0.5 else "yellow" if unreadable > 0.25 else "green"
+        table.add_row(
+            bucket,
+            f"{len(group):,}",
+            f"{counts['person']:,}",
+            f"{counts['not_of_interest']:,}",
+            f"{counts['non_face']:,}",
+            f"[{colour}]{unreadable:5.1%}[/{colour}]",
+        )
+    console.print(table)
+
+
 def validate(rows: list[dict[str, object]]) -> list[str]:
     """Checks whose failure would silently invalidate every downstream number."""
     problems: list[str] = []
@@ -199,6 +236,9 @@ def main() -> int:
     table.add_row("[bold]total[/bold]", f"[bold]{len(rows):,}[/bold]", "")
     console.print(table)
     console.print(f"Distinct identities: [bold]{len(people)}[/bold]")
+
+    print_readability(rows, "quality_bucket", ("good", "marginal", "bad"))
+    print_readability(rows, "size_bucket", ("large", "medium", "small", "tiny"))
 
     problems = validate(rows)
     if problems:
