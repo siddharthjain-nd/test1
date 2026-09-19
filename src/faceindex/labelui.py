@@ -445,12 +445,15 @@ INDEX_HTML = """<!doctype html>
 
     <div class="verdict" id="v-unsure" tabindex="0">
       <span class="k"><kbd>u</kbd><span class="nm">Unsure</span><span class="ct" id="c-unsure">0</span></span>
-      <span class="sub">cannot tell — costs nothing</span>
+      <span class="sub">not readable from the face</span>
       <span class="why">
         <b>Excluded from scoring entirely.</b> Never guess: a wrong answer key marks correct
         behaviour as failure, and nothing downstream can detect it.<br><br>
-        Use this when you only recognise someone from hair, clothes or context rather than
-        their face — the system only gets the face.
+        <b>Judge from the face alone.</b> Mentally crop away everything else — if you are
+        identifying someone by earrings, hair, clothing or who else is in the shot, press this.
+        The system only ever sees the face, so a face whose identity is not in its own pixels
+        is unwinnable, and unwinnable cases drag down the profile slice for a reason no amount
+        of work can fix.
       </span>
     </div>
   </div>

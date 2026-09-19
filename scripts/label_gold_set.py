@@ -13,8 +13,22 @@ The four labels
     person_N          same arbitrary id for the same human; names are irrelevant
     not_of_interest   a real face, but a stranger -- the clusterer must be free to call
                       them noise, or every wedding invents a dozen phantom people
-    non_face          detector false positive: a pattern, statue or poster
-    unsure            genuinely ambiguous. Excluded from metrics. Never guess.
+    non_face          no face present in the scene: a pattern, statue, poster, or a face
+                      inside a framed photograph hanging on the wall
+    unsure            not readable from the face. Excluded from metrics. Never guess.
+
+Judge from the face alone (decision 32)
+    Mentally crop away everything but the face. If you are identifying someone by their
+    earrings, hair, clothing or by who else is in the shot, mark it `unsure`.
+
+    Your labels never reach the model -- there is no training here -- so this cannot teach
+    it the wrong thing. The damage is to the yardstick. The system only ever receives face
+    pixels, so a face whose identity is not in those pixels is unwinnable, and unwinnable
+    cases sink the profile slice for a reason no amount of work can ever fix. You would
+    then spend real effort chasing a number that cannot move.
+
+    Apply it mechanically. A rule you follow identically at minute 5 and minute 90 beats a
+    better rule you apply by feel.
 
 Usage
     python scripts/label_gold_set.py
