@@ -45,10 +45,72 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rich.console import Console
+from rich.table import Table
 
 from faceindex import labelui, paths, store
 
 console = Console()
+
+
+def print_queue(conn: object) -> int:
+    """How much work is left, and how much of it is the slow kind.
+
+    Big clusters are one keystroke each. Small ones are often not a person at all -- faces
+    of poor quality embed into a similar mush, so the clusterer groups them by *being bad*
+    rather than by identity -- and those have to be judged face by face. Knowing the split
+    up front stops the slow tail from reading as something having gone wrong.
+    """
+    rows = conn.execute(  # type: ignore[attr-defined]
+        """
+        SELECT c.bootstrap_cluster AS cid, COUNT(*) AS n
+        FROM gold_candidates c
+        LEFT JOIN gold_labels g ON g.face_id = c.face_id
+        WHERE g.face_id IS NULL
+        GROUP BY c.bootstrap_cluster
+        """
+    ).fetchall()
+
+    if not rows:
+        console.print("[green]Nothing left to label.[/green]")
+        return 0
+
+    noise = sum(int(r["n"]) for r in rows if int(r["cid"]) == -1)
+    clusters = [int(r["n"]) for r in rows if int(r["cid"]) != -1]
+    singles = sum(n for n in clusters if n == 1)
+
+    bands = (("10+ faces", 10, 10**9), ("5-9", 5, 10), ("2-4", 2, 5))
+    table = Table(title="What is left", header_style="bold")
+    table.add_column("Sheet")
+    table.add_column("Sheets", justify="right")
+    table.add_column("Faces", justify="right")
+    table.add_column("Effort")
+
+    for name, low, high in bands:
+        sized = [n for n in clusters if low <= n < high]
+        if sized:
+            effort = "one keystroke each" if low >= 5 else "usually one, sometimes split"
+            table.add_row(name, f"{len(sized):,}", f"{sum(sized):,}", effort)
+
+    if singles:
+        table.add_row("single-face piles", f"{singles:,}", f"{singles:,}", "judged individually")
+    if noise:
+        table.add_row("noise bucket", "—", f"{noise:,}", "judged individually")
+
+    console.print(table)
+
+    slow = singles + noise
+    total = sum(clusters) + noise
+    console.print(
+        f"\n{total:,} faces left. Roughly [bold]{slow:,}[/bold] ({100 * slow / total:.0f}%) are "
+        f"the face-by-face kind — singles and the noise bucket, which is not pre-grouped on "
+        f"purpose."
+    )
+    console.print(
+        "Small mixed piles are expected: a cluster of three blurry faces is usually three "
+        "different people who merely look equally unreadable. Judge them individually, or "
+        "press [bold]s[/bold] to skip and come back."
+    )
+    return 0
 
 
 def main() -> int:
@@ -63,12 +125,19 @@ def main() -> int:
         help="Localhost only by default. The data behind this server is biometric.",
     )
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument(
+        "--queue", action="store_true", help="What is left to label, and in what shape"
+    )
     args = parser.parse_args()
 
     db_path = args.db or paths.index_db_path()
     if not db_path.exists():
         console.print(f"[red]No index at {db_path}.[/red]")
         return 1
+
+    if args.queue:
+        with store.open_index(db_path, read_only=True) as conn:
+            return print_queue(conn)
 
     with store.open_index(db_path, read_only=True) as conn:
         pending = conn.execute("SELECT COUNT(*) AS n FROM gold_candidates").fetchone()["n"]
