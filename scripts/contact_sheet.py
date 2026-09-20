@@ -74,7 +74,11 @@ def render(
         except (OSError, ValueError):
             draw.rectangle([x, y, x + cell, y + cell], fill=(80, 0, 0))
 
-        if label == "date":
+        if label == "id":
+            # Reviewing a labelled person: the face id is what you need, because it is the
+            # handle for unlabelling a single face that landed on the wrong person.
+            caption = f"#{row['face_id']} {str(row['taken_at'] or '')[:7]}"  # type: ignore[index]
+        elif label == "date":
             # When judging a cluster, *when* the photo was taken matters far more than how
             # many pixels wide the face is: one person across years is the hard case.
             caption = str(row["taken_at"] or "undated")[:7]  # type: ignore[index]
@@ -154,6 +158,9 @@ def main() -> int:
     )
     parser.add_argument("--clusters", type=int, default=12, help="Rows in the overview")
     parser.add_argument("--noise", action="store_true", help="Faces that failed to cluster")
+    parser.add_argument(
+        "--person", help="Review everything labelled as this person; captions show face ids"
+    )
     parser.add_argument("--min-iod", type=float, default=None)
     parser.add_argument("--max-iod", type=float, default=None)
     parser.add_argument("--kind", default=None, help="Restrict to a photo kind, e.g. forwarded")
@@ -175,11 +182,20 @@ def main() -> int:
             return cluster_overview(conn, args)
 
         base = (
-            "SELECT f.crop_path, f.context_path, f.interocular_px, f.yaw_deg, f.blur, "
-            "f.det_score, p.kind, p.taken_at FROM faces f JOIN photos p ON p.id = f.photo_id "
+            "SELECT f.id AS face_id, f.crop_path, f.context_path, f.interocular_px, "
+            "f.yaw_deg, f.blur, f.det_score, p.kind, p.taken_at "
+            "FROM faces f JOIN photos p ON p.id = f.photo_id "
         )
 
-        if args.cluster is not None or args.noise:
+        if args.person:
+            sql = (
+                base + "JOIN gold_labels g ON g.face_id = f.id "
+                "WHERE g.person_id = ? ORDER BY p.taken_at"
+            )
+            rows = conn.execute(sql, (args.person,)).fetchall()
+            label = "id"
+            described = f'person "{args.person}"'
+        elif args.cluster is not None or args.noise:
             cluster_id = -1 if args.noise else args.cluster
             sql = (
                 base + "JOIN bootstrap_clusters b ON b.face_id = f.id "
@@ -233,7 +249,15 @@ def main() -> int:
 
     console.print(f"[green]Wrote {args.out}[/green] ({len(rows)} of {total:,} faces, {described})")
 
-    if label == "date":
+    if label == "id":
+        console.print("Captions are face ids and capture months.")
+        console.print(
+            "\n[bold]What to look for:[/bold] anyone who is not this person. Note their id "
+            "and unlabel just that face:\n"
+            "  python scripts/reset_labels.py --face 12345\n"
+            "It returns to the queue; the rest of this person's labels are untouched."
+        )
+    elif label == "date":
         console.print("Captions are capture dates.")
         if args.noise:
             console.print(

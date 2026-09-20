@@ -106,26 +106,39 @@ def list_people(conn: object) -> int:
 
 
 def merge_people(conn: object, source: str, target: str, *, assume_yes: bool) -> int:
-    """Rename one person's labels onto another. Nothing is deleted."""
+    """Move one person's labels onto another name. Nothing is deleted.
+
+    Covers both a plain rename (the target does not exist yet) and joining two names that
+    turned out to be the same human -- the same operation either way.
+    """
     if source == target:
         console.print("[red]Those are the same name.[/red]")
         return 1
 
     counts = {
-        name: conn.execute(  # type: ignore[attr-defined]
-            "SELECT COUNT(*) AS n FROM gold_labels WHERE person_id = ?", (name,)
-        ).fetchone()["n"]
+        name: int(
+            conn.execute(  # type: ignore[attr-defined]
+                "SELECT COUNT(*) AS n FROM gold_labels WHERE person_id = ?", (name,)
+            ).fetchone()["n"]
+        )
         for name in (source, target)
     }
     if not counts[source]:
-        console.print(f'[red]No labels for "{source}".[/red]')
+        console.print(f'[red]No labels for "{source}".[/red] Run --people to see the names.')
         return 1
 
-    console.print(
-        f"Merging [bold]{source}[/bold] ({counts[source]} faces) into "
-        f"[bold]{target}[/bold] ({counts[target]} faces) "
-        f"-> {counts[source] + counts[target]} faces."
-    )
+    if counts[target]:
+        console.print(
+            f"Joining [bold]{source}[/bold] ({counts[source]} faces) and "
+            f"[bold]{target}[/bold] ({counts[target]} faces) into one person "
+            f"-> {counts[source] + counts[target]} faces."
+        )
+    else:
+        console.print(
+            f"Renaming [bold]{source}[/bold] to [bold]{target}[/bold] "
+            f"({counts[source]} faces). No existing person by that name."
+        )
+
     if not assume_yes and input("Type 'yes' to confirm: ").strip().lower() != "yes":
         console.print("Cancelled.")
         return 1
@@ -134,9 +147,42 @@ def merge_people(conn: object, source: str, target: str, *, assume_yes: bool) ->
         "UPDATE gold_labels SET person_id = ? WHERE person_id = ?", (target, source)
     )
     conn.commit()  # type: ignore[attr-defined]
-    console.print(
-        f"[green]Merged. {target} now has {counts[source] + counts[target]} faces.[/green]"
+    console.print(f"[green]Done. {target} now has {counts[source] + counts[target]} faces.[/green]")
+    return 0
+
+
+def clear_faces(conn: object, face_ids: list[int], *, assume_yes: bool) -> int:
+    """Unlabel individual faces so they return to the queue.
+
+    For the case where one face landed on the wrong person. Clearing the whole identity
+    would throw away dozens of correct judgements to fix a single wrong one.
+    """
+    rows = conn.execute(  # type: ignore[attr-defined]
+        f"SELECT face_id, label, person_id FROM gold_labels "
+        f"WHERE face_id IN ({','.join('?' for _ in face_ids)})",
+        face_ids,
+    ).fetchall()
+
+    if not rows:
+        console.print("[yellow]None of those faces are labelled.[/yellow]")
+        return 0
+
+    table = Table(title="About to unlabel", header_style="bold")
+    table.add_column("Face", justify="right")
+    table.add_column("Current label")
+    for row in rows:
+        table.add_row(str(row["face_id"]), str(row["person_id"] or row["label"]))
+    console.print(table)
+
+    if not assume_yes and input("Type 'yes' to confirm: ").strip().lower() != "yes":
+        console.print("Cancelled.")
+        return 1
+
+    conn.executemany(  # type: ignore[attr-defined]
+        "DELETE FROM gold_labels WHERE face_id = ?", [(i,) for i in face_ids]
     )
+    conn.commit()  # type: ignore[attr-defined]
+    console.print(f"[green]Unlabelled {len(rows)} face(s); they return to the queue.[/green]")
     return 0
 
 
@@ -159,7 +205,20 @@ def main() -> int:
         "--merge",
         nargs=2,
         metavar=("FROM", "TO"),
-        help="Fold one person into another, keeping their labels. Fixes a split identity.",
+        help="Move one person's faces onto another name. Renames, or joins a split identity.",
+    )
+    parser.add_argument(
+        "--rename",
+        nargs=2,
+        metavar=("FROM", "TO"),
+        help="Same as --merge; clearer when you simply gave someone the wrong name.",
+    )
+    parser.add_argument(
+        "--face",
+        type=int,
+        nargs="+",
+        metavar="ID",
+        help="Unlabel these face ids, e.g. one face put on the wrong person.",
     )
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
     args = parser.parse_args()
@@ -173,9 +232,14 @@ def main() -> int:
         with store.open_index(db_path, read_only=True) as conn:
             return list_people(conn)
 
-    if args.merge:
+    move = args.merge or args.rename
+    if move:
         with store.open_index(db_path) as conn:
-            return merge_people(conn, args.merge[0], args.merge[1], assume_yes=args.yes)
+            return merge_people(conn, move[0], move[1], assume_yes=args.yes)
+
+    if args.face:
+        with store.open_index(db_path) as conn:
+            return clear_faces(conn, args.face, assume_yes=args.yes)
 
     selectors: list[object] = [
         args.all,

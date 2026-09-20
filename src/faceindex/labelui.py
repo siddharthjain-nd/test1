@@ -580,6 +580,9 @@ async function refreshProgress() {
 }
 
 async function load() {
+  // Defensive: a new group must never arrive under an open picker still holding the old
+  // group's face ids.
+  closePicker();
   group = await api("/api/next");
   marked = new Set();
 
@@ -689,6 +692,19 @@ const BULK_CONFIRM = 8;
 async function submit(label, ids, personId) {
   if (!ids.length) { toast("Nothing selected"); return; }
 
+  // A second write must never start while one is in flight. If it did, the second would be
+  // working from face ids belonging to a group that is already being replaced.
+  if (busy) return;
+  busy = true;
+  try {
+    await write(label, ids, personId);
+  } finally {
+    busy = false;
+  }
+}
+
+async function write(label, ids, personId) {
+
   if (ids.length >= BULK_CONFIRM && !personId) {
     const what = { not_of_interest: "stranger", non_face: "not a face", unsure: "unsure" }[label];
     if (!confirm(`Mark ${ids.length} faces as "${what}"?\n\nClick individual faces first if you meant only some of them.`)) {
@@ -738,7 +754,8 @@ async function submit(label, ids, personId) {
 // name is suspiciously close to an existing one.
 // ---------------------------------------------------------------------------------
 
-let pickerOpen = false, pickRows = [], pickIndex = 0, pickIds = [], pickPersons = [], pickNext = "";
+let pickerOpen = false, busy = false;
+let pickRows = [], pickIndex = 0, pickIds = [], pickPersons = [], pickNext = "";
 
 const norm = (s) => s.trim().toLowerCase().replace(/\\s+/g, " ");
 
@@ -762,6 +779,9 @@ async function assignPerson(which) {
     toast(which === "clicked" ? "Click some faces first" : "Nothing left unclicked to assign");
     return;
   }
+
+  // Never stack a second picker on a stale group.
+  if (pickerOpen || busy) return;
 
   const data = await api("/api/persons");
   pickPersons = data.persons;
@@ -865,21 +885,31 @@ async function confirmPick() {
 $("nameInput").addEventListener("input", () => { pickIndex = 0; renderPicker(); });
 
 $("nameInput").addEventListener("keydown", async (event) => {
-  if (event.key === "ArrowDown") {
+  // stopPropagation is load-bearing, not tidiness. Without it the Enter that confirms a
+  // name also bubbles to the document handler, which reopens the picker -- still holding
+  // the face ids of the sheet just finished. The next name typed then overwrites the
+  // previous sheet's labels instead of naming the sheet on screen.
+  if (["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
     event.preventDefault();
+    event.stopPropagation();
+  }
+
+  if (event.key === "ArrowDown") {
     pickIndex = Math.min(pickIndex + 1, pickRows.length - 1);
     renderPicker();
   } else if (event.key === "ArrowUp") {
-    event.preventDefault();
     pickIndex = Math.max(pickIndex - 1, 0);
     renderPicker();
   } else if (event.key === "Enter") {
-    event.preventDefault();
     await confirmPick();
   } else if (event.key === "Escape") {
-    event.preventDefault();
     closePicker();
   }
+});
+
+// Clicking the backdrop cancels, so the panel can never be left stranded over the grid.
+$("scrim").addEventListener("click", (event) => {
+  if (event.target === $("scrim")) closePicker();
 });
 
 document.addEventListener("keydown", async (event) => {
