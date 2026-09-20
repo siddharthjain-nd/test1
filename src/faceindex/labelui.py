@@ -69,15 +69,32 @@ class GoldStore:
         }
 
     def persons(self) -> list[dict[str, Any]]:
+        """Everyone named so far, each with a face to recognise them by.
+
+        The thumbnail is the point. After an hour nobody remembers who ``cousin_a`` was, and
+        a name you cannot place is a name you will accidentally duplicate -- which splits one
+        person in two and makes the scorer mark correct grouping as an error.
+        """
         rows = self.conn.execute(
-            "SELECT person_id, COUNT(*) AS n FROM gold_labels "
-            "WHERE person_id IS NOT NULL GROUP BY person_id"
+            """
+            SELECT g.person_id AS person_id, COUNT(*) AS n,
+                   (SELECT g2.face_id FROM gold_labels g2
+                      JOIN faces f2 ON f2.id = g2.face_id
+                     WHERE g2.person_id = g.person_id
+                     ORDER BY f2.interocular_px DESC LIMIT 1) AS sample
+            FROM gold_labels g
+            WHERE g.person_id IS NOT NULL
+            GROUP BY g.person_id
+            """
         ).fetchall()
-        people = [(str(r["person_id"]), int(r["n"])) for r in rows]
-        # Numeric sort, so person_10 does not fall between person_1 and person_2 in the
-        # merge prompt -- a lexical order makes an existing id easy to miss and duplicate.
+        people = [(str(r["person_id"]), int(r["n"]), r["sample"]) for r in rows]
+        # Numeric sort, so person_10 does not fall between person_1 and person_2 -- a lexical
+        # order makes an existing id easy to miss and duplicate.
         people.sort(key=lambda entry: _person_sort_key(entry[0]))
-        return [{"person_id": person_id, "count": count} for person_id, count in people]
+        return [
+            {"person_id": person_id, "count": count, "sample": sample}
+            for person_id, count, sample in people
+        ]
 
     def next_person_id(self) -> str:
         highest = 0
@@ -392,6 +409,50 @@ INDEX_HTML = """<!doctype html>
     background:var(--danger); color:#1a0505;
     font-size:11px; font-weight:700; display:grid; place-items:center;
   }
+
+  /* ---- person picker ---- */
+  #scrim {
+    position:fixed; inset:0; background:#000a; display:none;
+    align-items:flex-start; justify-content:center; padding-top:9vh; z-index:50;
+  }
+  #scrim.on { display:flex; }
+  #picker {
+    width:min(520px, 92vw); background:var(--panel);
+    border:1px solid var(--line); border-radius:11px; overflow:hidden;
+    box-shadow:0 24px 70px #000b;
+  }
+  #picker .top { padding:13px 16px 11px; border-bottom:1px solid var(--line); }
+  #picker .top .q { font-size:13px; color:var(--muted); }
+  #nameInput {
+    width:100%; margin-top:8px; padding:9px 11px; font-size:15px;
+    background:var(--bg); color:var(--fg);
+    border:1px solid var(--accent); border-radius:6px; outline:none;
+  }
+  #hits { max-height:46vh; overflow-y:auto; }
+  .hit {
+    display:flex; align-items:center; gap:11px; padding:8px 14px; cursor:pointer;
+    border-left:3px solid transparent;
+  }
+  .hit.on { background:#ffffff12; border-left-color:var(--accent); }
+  .hit img {
+    width:40px; height:40px; border-radius:5px; object-fit:cover;
+    background:var(--line); flex:none;
+  }
+  .hit .nm { font-size:14px; }
+  .hit .meta { margin-left:auto; font:12px ui-monospace,monospace; color:var(--muted); }
+  .hit.new .badge {
+    width:40px; height:40px; border-radius:5px; flex:none; display:grid; place-items:center;
+    background:var(--accent); color:#04121c; font-size:20px; font-weight:700;
+  }
+  #picker .foot {
+    padding:9px 15px; border-top:1px solid var(--line);
+    font-size:11.5px; color:var(--muted); display:flex; gap:14px; flex-wrap:wrap;
+  }
+  #warnRow {
+    display:none; padding:10px 15px; background:#4a3a12;
+    border-top:1px solid #6b5418; font-size:12.5px; color:#f0d79a;
+  }
+  #warnRow.on { display:block; }
 </style>
 </head>
 <body>
@@ -473,6 +534,24 @@ INDEX_HTML = """<!doctype html>
   </div>
 </header>
 <main><div class="grid" id="grid"></div></main>
+
+<div id="scrim">
+  <div id="picker">
+    <div class="top">
+      <span class="q" id="pickQ"></span>
+      <input id="nameInput" autocomplete="off" spellcheck="false" placeholder="Type a name…">
+    </div>
+    <div id="hits"></div>
+    <div id="warnRow"></div>
+    <div class="foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+      <span><kbd>Enter</kbd> choose</span>
+      <span><kbd>Esc</kbd> cancel</span>
+      <span>reuse a name to join one person across piles</span>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -645,10 +724,36 @@ async function submit(label, ids, personId) {
   }
 }
 
+// ---------------------------------------------------------------------------------
+// Person picker
+//
+// A plain text box is the single most dangerous control in this tool. Each person shows
+// up in roughly forty faces spread across many piles, so over a long session one of them
+// inevitably gets typed two ways -- "mom" and "Mom" -- which splits one human into two in
+// the answer key. The scorer then marks the system *wrong* for grouping her correctly, and
+// nothing downstream can tell that is what happened.
+//
+// Hence: filter as you type, a face beside every name because nobody remembers who
+// "cousin_a" was after an hour, exact matching that ignores case, and a warning when a new
+// name is suspiciously close to an existing one.
+// ---------------------------------------------------------------------------------
+
+let pickerOpen = false, pickRows = [], pickIndex = 0, pickIds = [], pickPersons = [], pickNext = "";
+
+const norm = (s) => s.trim().toLowerCase().replace(/\\s+/g, " ");
+
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+
 async function assignPerson(which) {
-  // "rest" assigns the unclicked majority, "clicked" assigns just what you picked. A pile
-  // that turns out to hold two people needs both: click one person, Shift+Enter names them,
-  // Enter names whoever is left.
+  // "rest" names the unclicked majority, "clicked" names just what you picked. A pile that
+  // turns out to hold two people needs both: click one, Shift+Enter, then Enter for the rest.
   const ids = which === "clicked"
     ? group.faces.map((f) => f.face_id).filter((id) => marked.has(id))
     : personTargets();
@@ -658,19 +763,129 @@ async function assignPerson(which) {
     return;
   }
 
-  const { persons, next_person_id } = await api("/api/persons");
-  const known = persons.map((p) => `${p.person_id} (${p.count})`).join(", ") || "none yet";
-  const answer = prompt(
-    `Name for ${ids.length} face(s).\\n\\nAlready used: ${known}\\n\\n` +
-    `Reuse an existing name if this is the same person — that is how one person gets ` +
-    `joined across several piles. Enter alone creates ${next_person_id}.`,
-    next_person_id
-  );
-  if (answer === null) return;
-  await submit("person", ids, answer.trim() || next_person_id);
+  const data = await api("/api/persons");
+  pickPersons = data.persons;
+  pickNext = data.next_person_id;
+  pickIds = ids;
+  pickIndex = 0;
+  pickerOpen = true;
+
+  $("pickQ").textContent = `Name these ${ids.length} face(s)`;
+  $("nameInput").value = "";
+  $("scrim").classList.add("on");
+  renderPicker();
+  $("nameInput").focus();
 }
 
+function closePicker() {
+  pickerOpen = false;
+  $("scrim").classList.remove("on");
+  $("warnRow").classList.remove("on");
+}
+
+function renderPicker() {
+  const typed = $("nameInput").value;
+  const key = norm(typed);
+  const matches = key
+    ? pickPersons.filter((p) => norm(p.person_id).includes(key))
+    : pickPersons;
+  const exact = pickPersons.find((p) => norm(p.person_id) === key);
+
+  pickRows = [];
+  if (!exact) {
+    const name = typed.trim() || pickNext;
+    pickRows.push({ kind: "new", person_id: name });
+  }
+  matches.forEach((p) => pickRows.push({ kind: "old", ...p }));
+
+  if (pickIndex >= pickRows.length) pickIndex = Math.max(0, pickRows.length - 1);
+
+  const hits = $("hits");
+  hits.innerHTML = "";
+  pickRows.forEach((row, index) => {
+    const el = document.createElement("div");
+    el.className = "hit" + (index === pickIndex ? " on" : "") + (row.kind === "new" ? " new" : "");
+
+    if (row.kind === "new") {
+      const badge = document.createElement("div");
+      badge.className = "badge";
+      badge.textContent = "+";
+      el.appendChild(badge);
+    } else {
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.src = `/crop/${row.sample}?kind=context`;
+      el.appendChild(img);
+    }
+
+    const nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = row.kind === "new" ? `Create “${row.person_id}”` : row.person_id;
+    el.appendChild(nm);
+
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = row.kind === "new" ? "new person" : `${row.count} faces`;
+    el.appendChild(meta);
+
+    el.onclick = () => { pickIndex = index; confirmPick(); };
+    hits.appendChild(el);
+  });
+
+  // Warn only on a near miss. An outright new name should stay a two-keystroke path.
+  const warn = $("warnRow");
+  const chosen = pickRows[pickIndex];
+  if (chosen && chosen.kind === "new" && key.length >= 3) {
+    const close = pickPersons
+      .map((p) => ({ p, d: editDistance(key, norm(p.person_id)) }))
+      .filter((c) => c.d > 0 && c.d <= 2)
+      .sort((a, b) => a.d - b.d)[0];
+    if (close) {
+      warn.innerHTML =
+        `“${typed.trim()}” is very close to existing <b>${close.p.person_id}</b> ` +
+        `(${close.p.count} faces). If that is the same person, pick them below instead — ` +
+        `two names for one person splits them in the answer key, and the scorer then marks ` +
+        `correct grouping as an error.`;
+      warn.classList.add("on");
+      return;
+    }
+  }
+  warn.classList.remove("on");
+}
+
+async function confirmPick() {
+  const chosen = pickRows[pickIndex];
+  if (!chosen) return;
+  const name = chosen.kind === "new" ? (chosen.person_id || pickNext) : chosen.person_id;
+  const ids = pickIds;
+  closePicker();
+  await submit("person", ids, name);
+}
+
+$("nameInput").addEventListener("input", () => { pickIndex = 0; renderPicker(); });
+
+$("nameInput").addEventListener("keydown", async (event) => {
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    pickIndex = Math.min(pickIndex + 1, pickRows.length - 1);
+    renderPicker();
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    pickIndex = Math.max(pickIndex - 1, 0);
+    renderPicker();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    await confirmPick();
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    closePicker();
+  }
+});
+
 document.addEventListener("keydown", async (event) => {
+  // The picker owns the keyboard while it is open, or typing a name would also fire the
+  // verdict keys -- "non" would label the pile "not a face" before you finished the word.
+  if (pickerOpen) return;
   if (!group || group.kind === "done") return;
   const key = event.key.toLowerCase();
 
