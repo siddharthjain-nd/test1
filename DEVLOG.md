@@ -18,6 +18,61 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-20 — Clustering is good; the sampler was not
+
+**Phase:** 1  **Machine:** linux  **Status:** fixed, resample required
+
+### Measured — the bootstrap clustering is far better than assumed
+
+`diagnose_clusters.py --sampled-only`, on the 285 sampled clusters:
+
+| Tightness | Clusters | Share | Median face |
+|---|---|---|---|
+| tight >=0.55 | 239 | 83.9% | 61 px |
+| fair 0.40-0.55 | 40 | 14.0% | 42 px |
+| loose 0.30-0.40 | 4 | 1.4% | 16 px |
+| junk <0.30 | 2 | 0.7% | 7 px |
+
+Two unrelated faces baseline at 0.086. **98% of clusters are "probably one person" or
+better; six are doubtful.** Junk clusters have a median face of 7 px against 61 px in the
+tight ones, so the few bad ones are exactly the unreadable-face effect predicted — but they
+are a rounding error, not the story.
+
+A working hypothesis that mixed piles came from chaining and degenerate embeddings was
+therefore **wrong for this corpus**. Worth recording: the explanation was plausible, fluent,
+and not true. The measurement is what settled it.
+
+### The actual bug: the sample was 63% noise
+
+`label_gold_set.py --queue` after ~531 faces showed **no multi-face piles left at all** —
+138 singles plus 1,131 noise faces, 70% of the sample, every one judged individually.
+
+Cause: noise is exempt from the per-person caps, which is correct in itself — noise is not a
+person. But the caps cut clustered faces from 37,745 to ~15,644 while leaving all 26,133
+noise faces untouched, so **noise went from 41% of the pool to 63% of what the greedy fill
+was choosing from**, and a proportional sampler drew accordingly. `noise_review_share` was
+set to 0.10 and produced 0.63.
+
+The slow labelling was the visible symptom. The real damage was the composition: unclustered
+faces are overwhelmingly strangers and unreadable crops, so the set was heading for roughly
+600 person labels against a ~1,400 target and possibly under 25 identities — **a failure that
+would only have surfaced at export, after every one of the 1,800 faces had been judged.**
+
+### Fixed
+- Noise now enters only through the explicit reserve; the greedy fill skips it entirely.
+- `select(..., pinned=...)` carries already-labelled faces into a new sample, so resampling
+  costs none of the work done so far.
+- Three regression tests, one of which immediately earned its keep: the first version of the
+  pin fix still truncated with `[:total]`, which sorts by face id and silently dropped
+  pinned faces that sorted late — discarding finished labelling to satisfy a target count.
+  `_trim` now keeps every pinned face and lets the target give way instead.
+
+### Next
+- Re-run `sample_gold_set.py`; the 531 existing labels are preserved.
+- Expect the remaining ~1,270 faces to arrive as multi-face piles again, one keystroke each.
+
+---
+
 ## 2026-09-19 — The tiny-face question is answered: they are real
 
 **Phase:** 1  **Machine:** linux  **Status:** done

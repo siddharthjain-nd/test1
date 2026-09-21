@@ -112,6 +112,43 @@ def test_select_reserves_lowest_confidence_detections() -> None:
     assert all(c.det_score == pytest.approx(0.51) for c in reserved)
 
 
+def test_noise_enters_only_through_the_reserve() -> None:
+    """Regression: the real corpus produced a 63% noise sample against a 10% setting.
+
+    Noise is exempt from the per-person caps, correct in itself, but that leaves it untrimmed
+    while clustered faces are cut hard -- so it dominated what the greedy fill saw. Noise
+    faces are overwhelmingly strangers and unreadable crops, so the gold set starved of the
+    person labels it exists to supply, and it only showed up at export.
+    """
+    candidates = [make_candidate(i, cluster_id=i % 20) for i in range(300)]
+    candidates += [make_candidate(5000 + i, cluster_id=-1) for i in range(4000)]
+
+    config = sampling.SampleConfig(target_size=200, noise_review_share=0.10, detector_fp_count=0)
+    selected = sampling.select(candidates, config)
+
+    noise = sum(1 for c in selected if c.cluster_id == -1)
+    assert noise == 20, f"expected exactly the 10% reserve, got {noise}"
+
+
+def test_pinned_faces_survive_a_resample() -> None:
+    """Resampling after hours of labelling must not discard the work already done."""
+    candidates = [make_candidate(i, cluster_id=i % 20) for i in range(400)]
+    pinned = {3, 17, 42, 88}
+
+    selected = sampling.select(candidates, sampling.SampleConfig(target_size=50), pinned=pinned)
+    assert pinned <= {c.face_id for c in selected}
+
+
+def test_pinned_faces_are_not_duplicated() -> None:
+    candidates = [make_candidate(i, cluster_id=i % 10) for i in range(200)]
+    candidates += [make_candidate(900 + i, cluster_id=-1) for i in range(40)]
+    pinned = {1, 2, 3, 901, 902}
+
+    selected = sampling.select(candidates, sampling.SampleConfig(target_size=60), pinned=pinned)
+    ids = [c.face_id for c in selected]
+    assert len(ids) == len(set(ids))
+
+
 def test_select_never_exceeds_target_size() -> None:
     candidates = [make_candidate(i, cluster_id=i % 30) for i in range(500)]
     selected = sampling.select(candidates, sampling.SampleConfig(target_size=120))

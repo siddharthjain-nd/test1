@@ -46,6 +46,69 @@ BANDS = (
 )
 
 
+def compare_noise(conn: object) -> None:
+    """Are the unclustered faces junk, or perfectly good photographs?
+
+    This decides how much of the gold set they should occupy, and the two answers point in
+    opposite directions. If noise is unreadable crops, sampling it heavily wastes labelling
+    effort on faces nobody can judge. If noise is clear photographs of people who simply
+    appear once or twice, then it is the *hardest and most valuable* material available --
+    and leaving it out produces a gold set made only of faces the system already handles,
+    which scores well and teaches nothing.
+    """
+    table = Table(title="Unclustered faces vs clustered faces", header_style="bold")
+    table.add_column("Group")
+    table.add_column("Faces", justify="right")
+    table.add_column("Median size", justify="right")
+    table.add_column("Readable >=40px", justify="right")
+    table.add_column("Median blur", justify="right")
+    table.add_column("Median confidence", justify="right")
+
+    stats = {}
+    for name, predicate in (("clustered", "b.cluster_id != -1"), ("noise", "b.cluster_id = -1")):
+        rows = conn.execute(  # type: ignore[attr-defined]
+            f"SELECT f.interocular_px AS iod, f.blur AS blur, f.det_score AS score "
+            f"FROM bootstrap_clusters b JOIN faces f ON f.id = b.face_id WHERE {predicate}"
+        ).fetchall()
+        if not rows:
+            continue
+        iod = np.array([float(r["iod"] or 0.0) for r in rows])
+        blur = np.array([float(r["blur"] or 0.0) for r in rows])
+        score = np.array([float(r["score"]) for r in rows])
+        readable = float((iod >= 40).mean())
+        stats[name] = (len(rows), float(np.median(iod)), readable)
+        table.add_row(
+            name,
+            f"{len(rows):,}",
+            f"{np.median(iod):.0f} px",
+            f"{readable:5.1%}",
+            f"{np.median(blur):.0f}",
+            f"{np.median(score):.3f}",
+        )
+    console.print(table)
+
+    if "noise" in stats and "clustered" in stats:
+        noise_readable = stats["noise"][2]
+        clustered_readable = stats["clustered"][2]
+        if noise_readable >= clustered_readable * 0.7:
+            console.print(
+                f"\n[green]The noise bucket is not junk.[/green] {noise_readable:.0%} of "
+                f"unclustered faces are 40px or larger, against {clustered_readable:.0%} of "
+                f"clustered ones. These are mostly real, readable photographs of people who "
+                f"appear too rarely to form a group, or whose photo is atypical for them.\n"
+                f"They are the hardest and most valuable material the gold set can hold, and "
+                f"cutting them to a token share would leave a test made of faces the system "
+                f"already handles."
+            )
+        else:
+            console.print(
+                f"\n[yellow]The noise bucket is mostly low quality.[/yellow] Only "
+                f"{noise_readable:.0%} of unclustered faces reach 40px, against "
+                f"{clustered_readable:.0%} of clustered ones. Sampling it heavily spends "
+                f"labelling effort on faces nobody can judge."
+            )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
@@ -89,6 +152,10 @@ def main() -> int:
     if not rows:
         console.print("[red]No clusters found. Run bootstrap_cluster.py first.[/red]")
         return 1
+
+    with store.open_index(db_path, read_only=True) as conn:
+        compare_noise(conn)
+    console.print()
 
     # ---- baseline: what do two unrelated faces score? ------------------------------
     base = embed.load_matrix([bytes(r["embedding"]) for r in baseline_rows])

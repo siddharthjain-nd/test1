@@ -234,19 +234,60 @@ def apply_caps(candidates: list[Candidate], config: SampleConfig) -> list[Candid
     return sorted(kept, key=lambda c: c.face_id)
 
 
-def select(candidates: list[Candidate], config: SampleConfig) -> list[Candidate]:
-    """Greedy marginal matching against the target shares. Deterministic."""
+def _trim(chosen: list[Candidate], total: int, keep: set[int]) -> list[Candidate]:
+    """Cut the selection to size without ever discarding an already-labelled face.
+
+    A plain ``[:total]`` sorts by face id and truncates, which silently drops pinned faces
+    that happen to sort late -- throwing away finished labelling to satisfy a target count.
+    If the pinned set alone exceeds the target, the target loses.
+    """
+    if len(chosen) <= total:
+        return sorted(chosen, key=lambda c: c.face_id)
+
+    pinned_items = [c for c in chosen if c.face_id in keep]
+    others = [c for c in chosen if c.face_id not in keep]
+    room = max(0, total - len(pinned_items))
+    return sorted(pinned_items + others[:room], key=lambda c: c.face_id)
+
+
+def select(
+    candidates: list[Candidate],
+    config: SampleConfig,
+    *,
+    pinned: set[int] | None = None,
+) -> list[Candidate]:
+    """Greedy marginal matching against the target shares. Deterministic.
+
+    ``pinned`` faces are kept unconditionally. Resampling after hours of labelling must not
+    discard that work, so already-judged faces are carried into the new sample and the
+    quotas are filled around them.
+    """
     if not candidates:
         return []
 
     total = min(config.target_size, len(candidates))
-    reserved = _reserve(candidates, config, total)
-    chosen: list[Candidate] = list(reserved)
+    keep = pinned or set()
+
+    chosen: list[Candidate] = [c for c in candidates if c.face_id in keep]
     chosen_ids = {c.face_id for c in chosen}
 
-    pool = [c for c in candidates if c.face_id not in chosen_ids]
+    for candidate in _reserve(candidates, config, total):
+        if candidate.face_id not in chosen_ids:
+            chosen.append(candidate)
+            chosen_ids.add(candidate.face_id)
+
+    # Noise enters ONLY through the reserve, never through the greedy fill.
+    #
+    # Noise is exempt from the per-person caps -- correct, since it is not a person -- but
+    # that leaves it untrimmed while the clustered faces are cut hard. On the real corpus
+    # noise went from 41% of the pool to 63% of what remained after capping, and a greedy
+    # fill draws from that proportionally: `noise_review_share` said 10% and the sample came
+    # out 63% noise. That is not just slow to label. Unclustered faces are overwhelmingly
+    # strangers and unreadable crops, so the set starves of the person labels it exists to
+    # provide, and the shortfall only surfaces at export, after all the work is done.
+    pool = [c for c in candidates if c.face_id not in chosen_ids and c.cluster_id != -1]
     if not pool or len(chosen) >= total:
-        return sorted(chosen, key=lambda c: c.face_id)[:total]
+        return _trim(chosen, total, keep)
 
     codes = {
         dim: np.array([list(config.targets[dim]).index(c.strata[dim]) for c in pool])
@@ -282,7 +323,7 @@ def select(candidates: list[Candidate], config: SampleConfig) -> list[Candidate]
         for dim in config.targets:
             counts[dim][codes[dim][best]] += 1
 
-    return sorted(chosen, key=lambda c: c.face_id)
+    return _trim(chosen, total, keep)
 
 
 def _reserve(candidates: list[Candidate], config: SampleConfig, total: int) -> list[Candidate]:

@@ -127,7 +127,19 @@ def main() -> int:
             f"({args.per_cluster_per_day}/day, {args.per_cluster_total} total)"
         )
 
-        selected = sampling.select(capped, config)
+        # Work already done is never thrown away by a resample.
+        pinned = {int(r["face_id"]) for r in conn.execute("SELECT face_id FROM gold_labels")}
+        if pinned:
+            by_id = {c.face_id: c for c in candidates}
+            capped = list(
+                {c.face_id: c for c in capped + [by_id[i] for i in pinned if i in by_id]}.values()
+            )
+            console.print(
+                f"[bold]Keeping  :[/bold] {len(pinned):,} already-labelled face(s); "
+                f"quotas are filled around them"
+            )
+
+        selected = sampling.select(capped, config, pinned=pinned)
         console.print(f"[bold]Selected :[/bold] {len(selected):,} faces\n")
 
         report = sampling.composition_report(selected, config, tolerance=args.tolerance)
