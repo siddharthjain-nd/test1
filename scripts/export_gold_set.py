@@ -174,10 +174,14 @@ def validate(rows: list[dict[str, object]]) -> list[str]:
             f"only {labels['not_of_interest']} strangers labelled; PLAN.md targets ~300. "
             f"Without them the clusterer is never tested on its right to call a face noise."
         )
-    if singletons:
+    # Informational, not a defect. A one-face identity contributes no *positive* pairs, but it
+    # still tests whether the system wrongly merges them into somebody else, and BCubed scores
+    # them correctly when they are left alone. Only worth knowing about in bulk.
+    if len(singletons) > len(people) * 0.5:
         problems.append(
-            f"{len(singletons)} identities have a single face. They contribute no pairs and "
-            f"cannot be clustered correctly by any algorithm: {', '.join(sorted(singletons)[:5])}"
+            f"{len(singletons)} of {len(people)} identities have a single face. They still test "
+            f"against wrong merges, but contribute no same-person pairs, so the positive side of "
+            f"the score rests on the other {len(people) - len(singletons)}."
         )
 
     # A person appearing in both the oldest and newest eras is the highest-value thing the
