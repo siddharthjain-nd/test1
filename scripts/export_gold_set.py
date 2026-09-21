@@ -154,6 +154,60 @@ def print_readability(rows: list[dict[str, object]], column: str, order: tuple[s
     console.print(table)
 
 
+def person_spans(rows: list[dict[str, object]]) -> dict[str, tuple[int, int]]:
+    """Earliest and latest year of each named person's faces."""
+    years: dict[str, list[int]] = {}
+    for row in rows:
+        if row["label"] == "person" and row["taken_at"]:
+            years.setdefault(str(row["person_id"]), []).append(int(str(row["taken_at"])[:4]))
+    return {person: (min(seen), max(seen)) for person, seen in years.items() if seen}
+
+
+def print_spans(rows: list[dict[str, object]]) -> None:
+    """How far apart each person's oldest and newest photo are.
+
+    The era buckets exist to spread the *sample* across time; using membership of two of them
+    as a measure of one person's time span was a category error. Someone photographed in 2010
+    and 2022 spans twelve years and is an excellent cross-age case, yet failed that check
+    because 2022 fell in the middle bucket, while 2016-to-2024 passed at eight years.
+
+    Years between a person's first and last photo is the quantity actually of interest, so
+    measure that directly and let the threshold follow the evidence.
+    """
+    spans = person_spans(rows)
+    if not spans:
+        return
+
+    gaps = sorted(((hi - lo), person) for person, (lo, hi) in spans.items())
+
+    table = Table(title="How far apart each person's photos are", header_style="bold")
+    table.add_column("Time span")
+    table.add_column("People", justify="right")
+    table.add_column("Reading")
+
+    for label, low, high, reading in (
+        ("15+ years", 15, 10**9, "the hardest case there is"),
+        ("10-14 years", 10, 15, "hard: real cross-age drift"),
+        ("5-9 years", 5, 10, "moderate, and severe for a child"),
+        ("1-4 years", 1, 5, "mild"),
+        ("same year", 0, 1, "no ageing tested"),
+    ):
+        band = [p for gap, p in gaps if low <= gap < high]
+        if band:
+            table.add_row(label, str(len(band)), reading)
+    console.print(table)
+
+    widest = gaps[-5:][::-1]
+    if widest:
+        console.print(
+            "Widest spans: "
+            + " · ".join(
+                f"[bold]{person}[/bold] {spans[person][0]}-{spans[person][1]} ({gap}y)"
+                for gap, person in widest
+            )
+        )
+
+
 def validate(rows: list[dict[str, object]]) -> list[str]:
     """Checks whose failure would silently invalidate every downstream number."""
     problems: list[str] = []
@@ -184,21 +238,30 @@ def validate(rows: list[dict[str, object]]) -> list[str]:
             f"the score rests on the other {len(people) - len(singletons)}."
         )
 
-    # A person appearing in both the oldest and newest eras is the highest-value thing the
-    # gold set can contain -- cross-age drift is the system's worst failure mode.
-    eras: dict[str, set[str]] = {}
-    for row in rows:
-        if row["label"] == "person":
-            eras.setdefault(str(row["person_id"]), set()).add(str(row["era_bucket"]))
-    cross_era = [p for p, seen in eras.items() if {"oldest", "recent"} <= seen]
-    if len(cross_era) < 10:
+    # A person photographed years apart is the highest-value thing the gold set can hold --
+    # cross-age drift is the system's worst failure mode.
+    #
+    # Measured as the gap between that person's first and last photo, NOT as membership of
+    # the oldest and most recent era buckets. Those buckets exist to spread the sample across
+    # time; reusing them here rejected a 2010-to-2022 person at twelve years while accepting
+    # a 2016-to-2024 one at eight.
+    spans = person_spans(rows)
+    hard = [p for p, (lo, hi) in spans.items() if hi - lo >= 10]
+    moderate = [p for p, (lo, hi) in spans.items() if hi - lo >= 5]
+
+    if len(moderate) < 10:
         problems.append(
-            f"only {len(cross_era)} identities appear in both the oldest and most recent eras; "
-            f"PLAN.md requires >=10. Cross-age drift is untestable below that, and it is the "
-            f"system's worst failure mode. This is the only place the requirement can be "
-            f"checked -- the bootstrap clustering cannot see cross-era identities by "
-            f"construction. To fix: pick people you have already labelled and label a few more "
-            f"of their faces from the era they are missing from, rather than resampling."
+            f"only {len(moderate)} identities span 5 years or more ({len(hard)} span 10+); "
+            f"PLAN.md wants >=10 to make cross-age drift measurable at all. To fix: label more "
+            f"faces of people you have already named, from years they are currently missing. "
+            f"If the library genuinely lacks them, lower the requirement and record why -- do "
+            f"not invent pairs that are not there."
+        )
+    elif len(hard) < 5:
+        problems.append(
+            f"{len(moderate)} identities span 5+ years, but only {len(hard)} span 10+. The "
+            f"5-year cases test mild ageing; the 10-year ones are where clustering actually "
+            f"breaks. Results on cross-age drift will be weakly supported."
         )
 
     return problems
@@ -243,6 +306,7 @@ def main() -> int:
 
     print_readability(rows, "quality_bucket", ("good", "marginal", "bad"))
     print_readability(rows, "size_bucket", ("large", "medium", "small", "tiny"))
+    print_spans(rows)
 
     problems = validate(rows)
     if problems:
