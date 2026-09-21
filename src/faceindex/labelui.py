@@ -104,23 +104,35 @@ class GoldStore:
                 highest = max(highest, int(match.group(1)))
         return f"person_{highest + 1}"
 
-    def next_group(self) -> dict[str, Any]:
+    def next_group(self, skip: set[int] | None = None) -> dict[str, Any]:
         """The next unlabelled bootstrap cluster, else a page of leftovers and noise.
 
         Clusters are served largest first: confirming a big clean cluster is the single
         highest-value keystroke available, and it shrinks the queue fastest.
+
+        ``skip`` holds clusters passed over in this session. Without it, skipping returns the
+        largest unlabelled cluster -- which is the one just skipped, so the key does nothing
+        and the same pile reappears forever.
         """
+        skip = skip or set()
+        excluded = ""
+        params: list[Any] = []
+        if skip:
+            excluded = f"AND c.bootstrap_cluster NOT IN ({','.join('?' for _ in skip)}) "
+            params = sorted(skip)
+
         rows = self.conn.execute(
-            """
+            f"""
             SELECT c.bootstrap_cluster AS cluster_id, COUNT(*) AS n
             FROM gold_candidates c
             LEFT JOIN gold_labels g ON g.face_id = c.face_id
-            WHERE g.face_id IS NULL AND c.bootstrap_cluster != -1
+            WHERE g.face_id IS NULL AND c.bootstrap_cluster != -1 {excluded}
             GROUP BY c.bootstrap_cluster
             HAVING n > 1
             ORDER BY n DESC, cluster_id ASC
             LIMIT 1
-            """
+            """,
+            params,
         ).fetchone()
 
         if rows is not None:
@@ -259,7 +271,9 @@ def make_handler(gold: GoldStore) -> type[BaseHTTPRequestHandler]:
                 if route == "/":
                     self._send(200, INDEX_HTML.encode(), "text/html; charset=utf-8")
                 elif route == "/api/next":
-                    self._json(gold.next_group())
+                    raw = parse_qs(parsed.query).get("skip", [""])[0]
+                    skip = {int(x) for x in raw.split(",") if x.strip().lstrip("-").isdigit()}
+                    self._json(gold.next_group(skip))
                 elif route == "/api/progress":
                     self._json(gold.progress())
                 elif route == "/api/persons":
@@ -556,6 +570,8 @@ INDEX_HTML = """<!doctype html>
 
 <script>
 let group = null, marked = new Set(), context = true, lastBatch = [];
+// Piles passed over this session. Cleared when the page reloads, so nothing is lost for good.
+let skipped = new Set();
 
 const $ = (id) => document.getElementById(id);
 
@@ -583,7 +599,8 @@ async function load() {
   // Defensive: a new group must never arrive under an open picker still holding the old
   // group's face ids.
   closePicker();
-  group = await api("/api/next");
+  const skip = [...skipped].join(",");
+  group = await api("/api/next" + (skip ? `?skip=${skip}` : ""));
   marked = new Set();
 
   if (group.kind === "done") {
@@ -928,7 +945,15 @@ document.addEventListener("keydown", async (event) => {
   else if (key === "n") await submit("not_of_interest", verdictTargets());
   else if (key === "x") await submit("non_face", verdictTargets());
   else if (key === "u") await submit("unsure", verdictTargets());
-  else if (key === "s") { toast("Skipped"); await load(); }
+  else if (key === "s") {
+    if (isCluster()) {
+      skipped.add(group.cluster_id);
+      toast(`Skipped pile ${group.cluster_id} — returns on reload`);
+      await load();
+    } else {
+      toast("Nothing to skip here — press u on faces you cannot judge");
+    }
+  }
   else if (key === "t") { context = !context; render(); }
   else if (key === "z" && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
