@@ -70,6 +70,31 @@ def main() -> int:
 
         by_id = {c.face_id: c for c in candidates}
 
+        # ---- Which years each era actually covers ----------------------------------
+        #
+        # The boundaries are derived from the library, not fixed: "recent" is the last two
+        # calendar years present, "oldest" is the earliest third of dated faces. Printing
+        # them turns an abstract label into something checkable against a photo's caption.
+        years_seen: dict[str, list[int]] = {}
+        for candidate in candidates:
+            era_name = candidate.strata["era"]
+            if candidate.day and candidate.day != "undated":
+                years_seen.setdefault(era_name, []).append(int(candidate.day[:4]))
+
+        spans = Table(title="Which years each era covers", header_style="bold")
+        spans.add_column("Era")
+        spans.add_column("Years", justify="right")
+        for era_name in ("oldest", "middle", "recent"):
+            found_years = years_seen.get(era_name)
+            if found_years:
+                lo, hi = min(found_years), max(found_years)
+                spans.add_row(era_name, f"{lo}" if lo == hi else f"{lo} to {hi}")
+        console.print(spans)
+        console.print(
+            "[dim]A cross-era identity needs at least one face in 'oldest' and one in "
+            "'recent'. Faces from the middle years do not count toward it.[/dim]\n"
+        )
+
         # ---- Era supply ------------------------------------------------------------
         eras = Table(title="Faces per era in the whole pool", header_style="bold")
         eras.add_column("Era")
