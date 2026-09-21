@@ -48,6 +48,16 @@ DEFAULT_TARGETS: dict[str, dict[str, float]] = {
     "filtered": {"plain": 0.88, "beauty": 0.12},
     "group": {"solo": 0.85, "group": 0.15},
     "quality": {"good": 0.60, "marginal": 0.25, "bad": 0.15},
+    # Whether the bootstrap managed to group this face at all. Measured 2026-09-21:
+    # unclustered faces are 38% readable against 43% for clustered ones -- barely different,
+    # so they are NOT junk. They are ordinary photographs of people who appear too rarely to
+    # reach the three-face minimum a cluster needs, or whose photo is unusual for them.
+    #
+    # That makes them the hardest material available, and the share has to be *controlled*
+    # rather than left to chance in either direction. Unmanaged it reached 63%, which buried
+    # the labelling in face-by-face work; capped at a token 10% the gold set would contain
+    # only faces the baseline already handles, and would score well while teaching nothing.
+    "clustered": {"clustered": 0.70, "noise": 0.30},
 }
 
 DIMENSIONS = tuple(DEFAULT_TARGETS)
@@ -58,8 +68,10 @@ class SampleConfig:
     target_size: int = 1800
     per_cluster_per_day: int = 3
     per_cluster_total: int = 70
-    # PLAN.md: "The noise/rejected bucket must be reviewed too."
-    noise_review_share: float = 0.10
+    # PLAN.md: "The noise/rejected bucket must be reviewed too." That is now enforced by the
+    # "clustered" stratum at 30%, so this extra reserve defaults off; raising it forces a
+    # floor of tagged noise-review faces on top of the stratum.
+    noise_review_share: float = 0.0
     # PLAN.md target composition: ~50 detector false positives.
     detector_fp_count: int = 50
     # Faces whose bootstrap cluster spans the oldest and most recent eras are the highest
@@ -156,6 +168,7 @@ def load_candidates(conn: sqlite3.Connection, *, beauty_marker: str) -> list[Can
             "filtered": "beauty" if beauty_marker and beauty_marker in row["path"] else "plain",
             "group": "group" if int(row["n_faces"]) >= 4 else "solo",
             "quality": _bucket(float(quality_score), (0.15, 0.40), ("bad", "marginal", "good")),
+            "clustered": "noise" if int(row["cluster_id"]) == -1 else "clustered",
         }
 
         candidates.append(
@@ -276,16 +289,10 @@ def select(
             chosen.append(candidate)
             chosen_ids.add(candidate.face_id)
 
-    # Noise enters ONLY through the reserve, never through the greedy fill.
-    #
-    # Noise is exempt from the per-person caps -- correct, since it is not a person -- but
-    # that leaves it untrimmed while the clustered faces are cut hard. On the real corpus
-    # noise went from 41% of the pool to 63% of what remained after capping, and a greedy
-    # fill draws from that proportionally: `noise_review_share` said 10% and the sample came
-    # out 63% noise. That is not just slow to label. Unclustered faces are overwhelmingly
-    # strangers and unreadable crops, so the set starves of the person labels it exists to
-    # provide, and the shortfall only surfaces at export, after all the work is done.
-    pool = [c for c in candidates if c.face_id not in chosen_ids and c.cluster_id != -1]
+    # Unclustered faces stay in the pool. They are held to the 30% target in
+    # DEFAULT_TARGETS["clustered"] like any other stratum, rather than being excluded --
+    # they are good photographs, and a gold set without them tests only the easy half.
+    pool = [c for c in candidates if c.face_id not in chosen_ids]
     if not pool or len(chosen) >= total:
         return _trim(chosen, total, keep)
 

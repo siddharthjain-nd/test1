@@ -93,9 +93,9 @@ sample:
   # time, so the bootstrap cluster stands in for it.
   per_cluster_per_day: 3
   per_cluster_total: 70
-  # PLAN.md: "The noise/rejected bucket must be reviewed too." Reviewing only confident
-  # clusters yields a gold set of exactly the faces the baseline already finds easy.
-  noise_review_share: 0.10
+  # Superseded by the `clustered` target below, which enforces the same thing as a stratum.
+  # Raise above 0 only to force a floor of explicitly tagged noise-review faces on top.
+  noise_review_share: 0.0
   detector_fp_count: 50
   cross_era_bonus: 0.5
   tolerance: 0.05
@@ -117,6 +117,13 @@ sample:
     filtered: { plain: 0.88, beauty: 0.12 }
     group:    { solo: 0.85, group: 0.15 }
     quality:  { good: 0.60, marginal: 0.25, bad: 0.15 }
+    # Did the bootstrap manage to group this face at all? Measured 2026-09-21: unclustered
+    # faces are 38% readable vs 43% for clustered ones, so they are ordinary photographs of
+    # people who appear too rarely to reach the three-face minimum a cluster needs. They are
+    # the hardest material available, and the share must be controlled in both directions:
+    # unmanaged it hit 63% and buried the labelling; capped at 10% the gold set would hold
+    # only faces the baseline already handles and would score well while teaching nothing.
+    clustered: { clustered: 0.70, noise: 0.30 }
 
 gold:
   labels_csv: "data/gold/labels.csv"

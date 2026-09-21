@@ -41,6 +41,7 @@ def make_candidate(
             "filtered": filtered,
             "group": group,
             "quality": quality,
+            "clustered": "noise" if cluster_id == -1 else "clustered",
         },
     )
 
@@ -112,22 +113,24 @@ def test_select_reserves_lowest_confidence_detections() -> None:
     assert all(c.det_score == pytest.approx(0.51) for c in reserved)
 
 
-def test_noise_enters_only_through_the_reserve() -> None:
-    """Regression: the real corpus produced a 63% noise sample against a 10% setting.
+def test_unclustered_faces_are_held_to_their_target_share() -> None:
+    """Regression: the real corpus produced a 63% unclustered sample.
 
-    Noise is exempt from the per-person caps, correct in itself, but that leaves it untrimmed
-    while clustered faces are cut hard -- so it dominated what the greedy fill saw. Noise
-    faces are overwhelmingly strangers and unreadable crops, so the gold set starved of the
-    person labels it exists to supply, and it only showed up at export.
+    Unclustered faces escape the per-person caps -- correct, they are not a person -- but
+    that left them untrimmed while clustered faces were cut hard, so they dominated the pool
+    the greedy fill drew from. They must be held to their stratum target instead: unmanaged
+    they bury the labelling in face-by-face work, and excluded entirely the gold set contains
+    only faces the baseline already groups successfully.
     """
-    candidates = [make_candidate(i, cluster_id=i % 20) for i in range(300)]
+    candidates = [make_candidate(i, cluster_id=i % 20) for i in range(600)]
     candidates += [make_candidate(5000 + i, cluster_id=-1) for i in range(4000)]
 
-    config = sampling.SampleConfig(target_size=200, noise_review_share=0.10, detector_fp_count=0)
+    config = sampling.SampleConfig(target_size=400, detector_fp_count=0)
     selected = sampling.select(candidates, config)
 
-    noise = sum(1 for c in selected if c.cluster_id == -1)
-    assert noise == 20, f"expected exactly the 10% reserve, got {noise}"
+    share = sum(1 for c in selected if c.cluster_id == -1) / len(selected)
+    target = sampling.DEFAULT_TARGETS["clustered"]["noise"]
+    assert abs(share - target) <= 0.05, f"expected ~{target:.0%} unclustered, got {share:.0%}"
 
 
 def test_pinned_faces_survive_a_resample() -> None:
