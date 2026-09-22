@@ -275,7 +275,13 @@ def main() -> int:
     parser.add_argument("--min-cluster-size", type=int, default=3)
     parser.add_argument("--min-samples", type=int, default=None)
     parser.add_argument("--pca", type=int, default=None)
-    parser.add_argument("--algorithm", choices=("hdbscan", "agglomerative"), default="hdbscan")
+    parser.add_argument(
+        "--algorithm",
+        choices=("hdbscan", "agglomerative", "chinese_whispers", "components"),
+        default="hdbscan",
+        help="chinese_whispers and components work over a sparse graph and need ~0.8 GB; "
+        "agglomerative needs ~6 GB at 64k faces (measured).",
+    )
     parser.add_argument(
         "--threshold",
         type=float,
@@ -288,7 +294,21 @@ def main() -> int:
         default=0.0,
         help="HDBSCAN: merge clusters closer than this. Counters over-splitting.",
     )
+    parser.add_argument(
+        "--similarity",
+        type=float,
+        default=0.5,
+        help="Graph methods: cut edges weaker than this cosine similarity. Main quality dial.",
+    )
     parser.add_argument("--threshold-sweep", default=None, help="Comma-separated merge distances")
+    parser.add_argument(
+        "--similarity-sweep", default=None, help="Comma-separated similarity cut-offs"
+    )
+    parser.add_argument(
+        "--force-memory",
+        action="store_true",
+        help="Run agglomerative even if predicted not to fit. Close other applications first.",
+    )
     parser.add_argument("--seed", type=int, default=20260906)
     parser.add_argument(
         "--jobs",
