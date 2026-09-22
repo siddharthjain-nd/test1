@@ -40,6 +40,7 @@ from faceindex import cluster, paths, store
 from faceindex.eval import load_gold_set, score, score_by_slice
 from faceindex.eval.goldset import SLICE_COLUMNS
 from faceindex.eval.split import load_split
+from faceindex.progress import format_duration, run_with_progress
 
 console = Console()
 
@@ -109,6 +110,22 @@ def show_results(path: Path) -> int:
     return 0
 
 
+def last_cluster_seconds(path: Path) -> float | None:
+    """How long the previous run took, used as this run's estimate.
+
+    Self-calibrating: the first run has no bar, every run after it does, and the figure comes
+    from this machine rather than a guess made on another one.
+    """
+    if not path.exists():
+        return None
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            rows = [r for r in csv.DictReader(handle) if r.get("t_cluster_s")]
+        return float(rows[-1]["t_cluster_s"]) if rows else None
+    except (OSError, ValueError):
+        return None
+
+
 def run_once(
     conn: object,
     gold: object,
@@ -117,7 +134,10 @@ def run_once(
     min_samples: int | None,
     pca: int | None,
     seed: int,
+    jobs: int,
+    estimate: float | None,
 ) -> tuple[object, object, int, float]:
+    console.print("Loading embeddings…")
     face_ids, matrix = cluster.load_embeddings(conn)  # type: ignore[arg-type]
     if not face_ids:
         raise SystemExit("No embeddings. Run scripts/embed_faces.py first.")
@@ -127,9 +147,19 @@ def run_once(
         min_samples=min_samples,
         pca_components=pca,
         random_seed=seed,
+        n_jobs=jobs,
     )
+
+    if estimate:
+        console.print(f"[dim]Last run took {format_duration(estimate)}.[/dim]")
+
     started = time.perf_counter()
-    result = cluster.bootstrap_cluster(matrix, config)
+    result = run_with_progress(
+        lambda: cluster.bootstrap_cluster(matrix, config),
+        f"Clustering {len(face_ids):,} faces",
+        estimate_seconds=estimate,
+        console=console,
+    )
     elapsed = time.perf_counter() - started
 
     predicted = {int(f): int(c) for f, c in zip(face_ids, result.labels, strict=True)}
@@ -214,6 +244,12 @@ def main() -> int:
     parser.add_argument("--pca", type=int, default=None)
     parser.add_argument("--seed", type=int, default=20260906)
     parser.add_argument(
+        "--jobs",
+        type=int,
+        default=-1,
+        help="Cores for the neighbour search. -1 uses all; sklearn defaults to ONE.",
+    )
+    parser.add_argument(
         "--sweep", default=None, help="Comma-separated min-cluster-size values, one run each"
     )
     parser.add_argument(
@@ -274,6 +310,8 @@ def main() -> int:
                 min_samples=args.min_samples,
                 pca=args.pca,
                 seed=args.seed,
+                jobs=args.jobs,
+                estimate=last_cluster_seconds(results_path),
             )
             console.print(f"Clustered {n_faces:,} faces in {elapsed:.0f}s.\n")
 

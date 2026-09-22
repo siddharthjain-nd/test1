@@ -36,6 +36,10 @@ class ClusterConfig:
     # only if the full-dimension run is measurably too slow on the target machine.
     pca_components: int | None = None
     random_seed: int = 20260906
+    # sklearn's HDBSCAN defaults n_jobs to None, which means ONE core -- so a 70-minute run
+    # left three of four cores idle. Only the neighbour search parallelises; the tree and
+    # hierarchy construction stay sequential, so expect a useful speedup rather than 4x.
+    n_jobs: int = -1
 
 
 @dataclass
@@ -72,6 +76,7 @@ def bootstrap_cluster(embeddings: np.ndarray, config: ClusterConfig) -> ClusterR
         min_samples=config.min_samples,
         metric="euclidean",
         cluster_selection_method="eom",
+        n_jobs=config.n_jobs,
     )
     labels = model.fit_predict(features)
     probabilities = getattr(model, "probabilities_", np.ones(len(labels)))
