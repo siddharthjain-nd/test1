@@ -316,12 +316,37 @@ def bootstrap_cluster(embeddings: np.ndarray, config: ClusterConfig) -> ClusterR
 # --------------------------------------------------------------------------------------
 
 
+def available_models(conn: sqlite3.Connection) -> list[tuple[str, int]]:
+    """``(model, n_faces)`` for every model with stored embeddings, most complete first."""
+    return [
+        (str(r["model"]), int(r["n"]))
+        for r in conn.execute(
+            "SELECT model, COUNT(*) AS n FROM face_embeddings WHERE embed_version = ? "
+            "GROUP BY model ORDER BY n DESC",
+            (embed.EMBED_VERSION,),
+        )
+    ]
+
+
 def load_embeddings(
-    conn: sqlite3.Connection, *, limit: int | None = None
+    conn: sqlite3.Connection, *, model: str | None = None, limit: int | None = None
 ) -> tuple[list[int], np.ndarray]:
-    """All stored embeddings at the current version, as ``(face_ids, matrix)``."""
-    sql = "SELECT face_id, embedding FROM face_embeddings WHERE embed_version = ? ORDER BY face_id"
-    params: list[object] = [embed.EMBED_VERSION]
+    """Stored embeddings as ``(face_ids, matrix)``, for one model.
+
+    Several models can now be stored side by side, so which one to score has to be stated.
+    Defaults to whichever has the most faces, which is the one just finished.
+    """
+    if model is None:
+        models = available_models(conn)
+        if not models:
+            return [], embed.load_matrix([])
+        model = models[0][0]
+
+    sql = (
+        "SELECT face_id, embedding FROM face_embeddings "
+        "WHERE embed_version = ? AND model = ? ORDER BY face_id"
+    )
+    params: list[object] = [embed.EMBED_VERSION, model]
     if limit is not None:
         sql += " LIMIT ?"
         params.append(limit)

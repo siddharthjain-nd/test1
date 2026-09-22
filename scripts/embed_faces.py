@@ -66,10 +66,17 @@ def print_stats(conn: object) -> None:
                 f"{entry['n']:,}",
             )
         console.print(prov)
-        if len(provenance) > 1:
+        platforms = {(e["platform"], e["onnxruntime_version"]) for e in provenance}
+        if len(platforms) > 1:
             console.print(
-                "[yellow]Warning:[/yellow] embeddings were produced by more than one "
-                "model/platform combination. They are not comparable. Re-embed from one machine."
+                "[yellow]Warning:[/yellow] embeddings were produced on more than one "
+                "platform or runtime version. Those are not comparable to each other "
+                "(PLAN.md section 3). Re-embed from a single machine."
+            )
+        if len({e["model"] for e in provenance}) > 1:
+            console.print(
+                "Several models are stored side by side. That is intended — choose which "
+                "to score with [bold]run_experiment.py --model[/bold]."
             )
 
 
@@ -115,7 +122,7 @@ def main() -> int:
     )
 
     with store.open_index(db_path) as conn:
-        tasks = embed.pending_faces(conn, limit=args.limit)
+        tasks = embed.pending_faces(conn, model_path.name, limit=args.limit)
         if not tasks:
             console.print("[green]Nothing to do: every face is already embedded.[/green]\n")
             print_stats(conn)

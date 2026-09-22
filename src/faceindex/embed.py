@@ -139,17 +139,25 @@ def runtime_fingerprint() -> tuple[str, str]:
 # --------------------------------------------------------------------------------------
 
 
-def pending_faces(conn: sqlite3.Connection, *, limit: int | None = None) -> list[tuple[int, str]]:
-    """``(face_id, crop_path)`` for faces with no embedding at the current version."""
+def pending_faces(
+    conn: sqlite3.Connection, model: str, *, limit: int | None = None
+) -> list[tuple[int, str]]:
+    """``(face_id, crop_path)`` for faces with no embedding *from this model*.
+
+    Matching on the model, not only the version, is what makes switching models work.
+    Keyed on version alone, every face already had an embedding from some model and the
+    pass reported "nothing to do" while quietly refusing to run the new one.
+    """
     sql = """
         SELECT f.id, f.crop_path FROM faces f
-        LEFT JOIN face_embeddings e ON e.face_id = f.id AND e.embed_version = ?
+        LEFT JOIN face_embeddings e
+               ON e.face_id = f.id AND e.embed_version = ? AND e.model = ?
         WHERE f.pool_version = ?
           AND f.crop_path IS NOT NULL
           AND e.face_id IS NULL
         ORDER BY f.id
     """
-    params: list[object] = [EMBED_VERSION, facepool.POOL_VERSION]
+    params: list[object] = [EMBED_VERSION, model, facepool.POOL_VERSION]
     if limit is not None:
         sql += " LIMIT ?"
         params.append(limit)
@@ -193,11 +201,11 @@ def write_embeddings(
     conn.executemany(
         """
         INSERT INTO face_embeddings (
-            face_id, embedding, dim, model, embed_version,
+            face_id, model, embedding, dim, embed_version,
             platform, onnxruntime_version, flip_tta, created_at
         ) VALUES (?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(face_id) DO UPDATE SET
-            embedding=excluded.embedding, dim=excluded.dim, model=excluded.model,
+        ON CONFLICT(face_id, model) DO UPDATE SET
+            embedding=excluded.embedding, dim=excluded.dim,
             embed_version=excluded.embed_version, platform=excluded.platform,
             onnxruntime_version=excluded.onnxruntime_version,
             flip_tta=excluded.flip_tta, created_at=excluded.created_at
@@ -205,9 +213,9 @@ def write_embeddings(
         [
             (
                 face_id,
+                embedder.model_name,
                 to_blob(vector),
                 int(vector.shape[0]),
-                embedder.model_name,
                 EMBED_VERSION,
                 host,
                 ort_version,

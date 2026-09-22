@@ -130,16 +130,26 @@ CREATE TABLE IF NOT EXISTS photo_pool_status (
 --
 -- platform and onnxruntime_version are stored per row because arm64 and x86_64 do not
 -- agree bit-for-bit; without them, two machines' embeddings are silently incomparable.
+-- Keyed by (face_id, model), not face_id alone.
+--
+-- One row per face meant switching models silently overwrote the previous embeddings, and
+-- the resume check -- which keys off embed_version -- then reported "nothing to do" because
+-- every face already had *an* embedding. Comparing two models also meant re-running the
+-- whole pass each time you switched back.
+--
+-- Storing both costs ~131 MB per model at 64k faces, which buys a direct A/B against the
+-- same gold set: exactly the ablation Phase 5 asks for.
 CREATE TABLE IF NOT EXISTS face_embeddings (
-    face_id       INTEGER PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE,
+    face_id       INTEGER NOT NULL REFERENCES faces(id) ON DELETE CASCADE,
+    model         TEXT    NOT NULL,
     embedding     BLOB    NOT NULL,   -- float32 little-endian, L2-normalised
     dim           INTEGER NOT NULL,
-    model         TEXT    NOT NULL,
     embed_version TEXT    NOT NULL,
     platform      TEXT    NOT NULL,
     onnxruntime_version TEXT NOT NULL,
     flip_tta      INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT    NOT NULL
+    created_at    TEXT    NOT NULL,
+    PRIMARY KEY (face_id, model)
 );
 
 CREATE INDEX IF NOT EXISTS idx_embeddings_version ON face_embeddings(embed_version);
@@ -188,11 +198,41 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _migrate_embeddings_key(conn: sqlite3.Connection) -> None:
+    """Move face_embeddings from a face_id key to (face_id, model), preserving every row.
+
+    Embeddings are expensive enough to be worth carrying across: 63,878 of them is a
+    twelve-minute pass, and re-running it to change a primary key would be careless.
+    """
+    columns = conn.execute("PRAGMA table_info(face_embeddings)").fetchall()
+    if not columns:
+        return  # Fresh database; _SCHEMA already created the current shape.
+
+    key = [row["name"] for row in columns if row["pk"]]
+    if len(key) == 2:
+        return  # Already migrated.
+
+    conn.execute("ALTER TABLE face_embeddings RENAME TO face_embeddings_v1")
+    conn.executescript(_SCHEMA)
+    conn.execute(
+        """
+        INSERT INTO face_embeddings
+            (face_id, model, embedding, dim, embed_version, platform,
+             onnxruntime_version, flip_tta, created_at)
+        SELECT face_id, model, embedding, dim, embed_version, platform,
+               onnxruntime_version, COALESCE(flip_tta, 0), created_at
+        FROM face_embeddings_v1
+        """
+    )
+    conn.execute("DROP TABLE face_embeddings_v1")
+
+
 def _apply_migrations(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(photos)")}
     for column, column_type in _MIGRATIONS:
         if column not in existing:
             conn.execute(f"ALTER TABLE photos ADD COLUMN {column} {column_type}")
+    _migrate_embeddings_key(conn)
 
 
 def connect(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:

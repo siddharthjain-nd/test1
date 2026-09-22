@@ -119,19 +119,59 @@ def _seeded_db(tmp_path: Path) -> sqlite3.Connection:
 
 def test_pending_faces_lists_unembedded(tmp_path: Path) -> None:
     conn = _seeded_db(tmp_path)
-    assert [face_id for face_id, _ in embed.pending_faces(conn)] == [1, 2]
+    assert [face_id for face_id, _ in embed.pending_faces(conn, "m.onnx")] == [1, 2]
 
 
 def test_pending_faces_is_resumable(tmp_path: Path) -> None:
     """Interrupting a 64k-face pass must not restart it."""
     conn = _seeded_db(tmp_path)
     conn.execute(
-        "INSERT INTO face_embeddings (face_id, embedding, dim, model, embed_version, "
-        "platform, onnxruntime_version, created_at) VALUES (1, ?, 512, 'm', ?, 'p', 'v', 'now')",
+        "INSERT INTO face_embeddings (face_id, model, embedding, dim, embed_version, "
+        "platform, onnxruntime_version, created_at) "
+        "VALUES (1, 'm.onnx', ?, 512, ?, 'p', 'v', 'now')",
         (embed.to_blob(np.ones(512, dtype=np.float32)), embed.EMBED_VERSION),
     )
     conn.commit()
-    assert [face_id for face_id, _ in embed.pending_faces(conn)] == [2]
+    assert [face_id for face_id, _ in embed.pending_faces(conn, "m.onnx")] == [2]
+
+
+def test_switching_model_makes_every_face_pending_again(tmp_path: Path) -> None:
+    """The bug this schema change fixes.
+
+    Keyed on embed_version alone, every face already had *an* embedding, so asking for a
+    different model reported "nothing to do" and silently refused to run.
+    """
+    conn = _seeded_db(tmp_path)
+    conn.execute(
+        "INSERT INTO face_embeddings (face_id, model, embedding, dim, embed_version, "
+        "platform, onnxruntime_version, created_at) "
+        "VALUES (1, 'w600k_mbf.onnx', ?, 512, ?, 'p', 'v', 'now')",
+        (embed.to_blob(np.ones(512, dtype=np.float32)), embed.EMBED_VERSION),
+    )
+    conn.commit()
+
+    assert [f for f, _ in embed.pending_faces(conn, "w600k_mbf.onnx")] == [2]
+    assert [f for f, _ in embed.pending_faces(conn, "w600k_r50.onnx")] == [1, 2]
+
+
+def test_two_models_coexist_for_one_face(tmp_path: Path) -> None:
+    """Both must be retrievable, so an A/B needs no re-embedding."""
+    conn = _seeded_db(tmp_path)
+    for model, value in (("w600k_mbf.onnx", 1.0), ("w600k_r50.onnx", 2.0)):
+        conn.execute(
+            "INSERT INTO face_embeddings (face_id, model, embedding, dim, embed_version, "
+            "platform, onnxruntime_version, created_at) VALUES (1, ?, ?, 512, ?, 'p', 'v', 'now')",
+            (model, embed.to_blob(np.full(512, value, dtype=np.float32)), embed.EMBED_VERSION),
+        )
+    conn.commit()
+
+    from faceindex import cluster
+
+    assert dict(cluster.available_models(conn)) == {"w600k_mbf.onnx": 1, "w600k_r50.onnx": 1}
+    _, small = cluster.load_embeddings(conn, model="w600k_mbf.onnx")
+    _, large = cluster.load_embeddings(conn, model="w600k_r50.onnx")
+    assert small[0][0] == 1.0
+    assert large[0][0] == 2.0
 
 
 def test_load_crops_skips_unreadable_without_raising(tmp_path: Path) -> None:

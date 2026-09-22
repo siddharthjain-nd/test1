@@ -196,6 +196,7 @@ def run_once(
     seed: int,
     jobs: int,
     estimate: float | None,
+    model: str | None = None,
     neighbors: int = 50,
     similarity: float = 0.5,
     force_memory: bool = False,
@@ -204,7 +205,7 @@ def run_once(
     epsilon: float = 0.0,
 ) -> tuple[object, object, int, float]:
     console.print("Loading embeddings…")
-    face_ids, matrix = cluster.load_embeddings(conn)  # type: ignore[arg-type]
+    face_ids, matrix = cluster.load_embeddings(conn, model=model)  # type: ignore[arg-type]
     if not face_ids:
         raise SystemExit("No embeddings. Run scripts/embed_faces.py first.")
 
@@ -332,6 +333,12 @@ def main() -> int:
     parser.add_argument("--min-cluster-size", type=int, default=3)
     parser.add_argument("--min-samples", type=int, default=None)
     parser.add_argument("--pca", type=int, default=None)
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Which stored embedding model to score, e.g. w600k_r50.onnx. "
+        "Defaults to whichever has the most faces.",
+    )
     parser.add_argument(
         "--algorithm",
         choices=("hdbscan", "agglomerative", "chinese_whispers", "components"),
@@ -475,6 +482,7 @@ def main() -> int:
                 neighbors=args.neighbors,
                 similarity=(threshold if args.similarity_sweep else args.similarity),
                 force_memory=args.force_memory,
+                model=args.model,
             )
             console.print(f"Clustered {n_faces:,} faces in {elapsed:.0f}s.\n")
 
@@ -496,7 +504,7 @@ def main() -> int:
                 "timestamp": datetime.now(UTC).isoformat(),
                 "label": label,
                 "split": args.split,
-                "embedder": "w600k_mbf.onnx",
+                "embedder": args.model or "auto",
                 "min_cluster_size": size,
                 "algorithm": args.algorithm,
                 "threshold": threshold,
