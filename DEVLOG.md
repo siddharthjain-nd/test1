@@ -18,6 +18,108 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-21 — Gold set frozen; evaluation harness built
+
+**Phase:** 1  **Machine:** linux (labels) / mac (code)  **Status:** Phase 1 complete
+
+### The gold set exists
+
+**2,122 judged faces · 1,499 named across 124 identities.** Larger and harder than the plan
+asked for: 124 people against a 25-35 target means far more chances to confuse similar faces,
+so the test discriminates better rather than worse.
+
+| Label | Faces | Share |
+|---|---|---|
+| person | 1,499 | 70.6% |
+| unsure | 291 | 13.7% |
+| not_of_interest | 174 | 8.2% |
+| non_face | 158 | 7.4% |
+
+Time spans: 7 people across 10-14 years, 11 across 5-9. Widest are `shanu` 2007-2021 (14y),
+`maa` 2011-2024 (13y), `me` 2013-2025 (12y).
+
+### Measured: where human readability collapses
+
+| Face size | Named | Unreadable |
+|---|---|---|
+| large | 385 / 420 | 3.3% |
+| medium | 610 / 735 | 3.3% |
+| small | 361 / 550 | 16.4% |
+| tiny | 143 / 417 | 39.1% |
+
+Flat at 3.3% down to 40px, then a cliff. **This is Phase 3's gating threshold, measured
+rather than guessed** — a clusterer has no business forming identities from faces a human
+cannot read. It came free from pressing `u` honestly on unreadable crops.
+
+### Corrected: the cross-era check was measuring the wrong quantity
+
+The check required a face in the `oldest` bucket *and* one in `recent`. Those buckets exist
+to spread the **sample** across time; reusing them as a measure of one person's time span was
+a category error. It rejected a 2010-to-2022 person at twelve years while accepting a
+2016-to-2024 one at eight.
+
+Replaced with the actual gap between a person's first and last photo. The user spotted this
+-- they asked why middle-era photos were excluded when 6-7 years also shows real ageing.
+Their instinct was right, though the fix was not "also count middle": buckets were simply the
+wrong unit. The requirement now splits in two, since these are different tests:
+**>=10 people spanning 5+ years**, and **>=5 of those spanning 10+**.
+
+Under the corrected measure the set passes on evidence that was there all along.
+
+### Declined: sourcing recent photos of old friends
+
+Proposed as a way to manufacture cross-era pairs. Refused on three grounds: it would measure
+a corpus that is not the library; photos obtained deliberately are near-always sharp frontal
+portraits, making the hardest slice artificially easy; and it would require rescanning and
+re-embedding underneath finished labels. Also out of keeping with the project's stated intent
+-- photos a friend knowingly sends are the library, photos taken from social media are not.
+
+### Built: the evaluation harness
+
+`src/faceindex/eval/` with `metrics.py` and `goldset.py`, plus `scripts/run_experiment.py`.
+Pairwise and BCubed P/R/F1, NMI, ARI, cluster counts, noise share, per-slice breakdowns, and
+one row appended per run to `data/results/results.csv`.
+
+Four label kinds are treated differently, and the reasoning matters more than the code:
+
+- `person_N` -- the only faces scored for identity.
+- `not_of_interest` -- **excluded**. The system may group strangers or call them noise;
+  neither is wrong. Scoring them as one shared class would mark it wrong for correctly
+  noticing that two photographs of the same passer-by are the same person.
+- `non_face` -- excluded from identity scoring, counted separately as **contamination**.
+  A poster filed into someone's album is invisible to precision and recall, because the
+  poster carries no identity label, yet a user would notice it instantly.
+- `unsure` -- excluded entirely, as promised at labelling time.
+
+Noise in the *prediction* is expanded into singletons before any metric runs. Left as a
+shared `-1`, every pair of ungrouped faces would count as a successful grouping, and a system
+that clustered nothing would score perfect recall. There is a test for exactly that.
+
+Slices use BCubed rather than pairwise because BCubed is defined per face, so averaging it
+over a subset is meaningful; a pair can straddle two slices, which makes "pairwise F1 on
+profile faces" ambiguous.
+
+### Problems / surprises
+
+A test asserting `bcubed_precision < pairwise_precision` failed, and the code was right: on
+that construction BCubed precision is 0.9623 against pairwise 0.9608. The property being
+demonstrated -- that pairwise is dominated by whoever appears most often -- shows up in
+*recall*, since pairwise weights a person by their pairs, which grows with the square of
+their photo count. Rewritten with 50 faces of one person and 4 of another: pairwise recall
+0.995, BCubed recall 0.944.
+
+Verified end to end on a synthetic corpus of 12 planted identities plus 20 junk faces: all 12
+recovered, contamination 0%, slices and the results table correct.
+
+**132 tests. ruff, ruff format, mypy all green.**
+
+### Next
+- Run the baseline on the real corpus. **Expect a mediocre number** -- it is a baseline, not
+  a result, and its only job is to be what later changes must beat.
+- Then Phase 2 proper, and Phase 3 gating against the 40px cliff measured above.
+
+---
+
 ## 2026-09-20 — Clustering is good; the sampler was not
 
 **Phase:** 1  **Machine:** linux  **Status:** fixed, resample required

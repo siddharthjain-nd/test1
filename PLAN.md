@@ -54,13 +54,14 @@ Consequences of being a *clustering* system:
 | Phase | Name | Track | Status |
 |---|---|---|---|
 | 0 | Foundations & decisions | Core | ☑ **Done** (2026-09-06) |
-| 1 | Gold set + evaluation harness | Core | ▶ **In progress** |
-| 2 | Baseline pipeline | Core | ☐ Not started |
-| 3 | Quality gating | Core | ☐ Not started |
+| 1 | Gold set + evaluation harness | Core | ☑ **Done** (2026-09-21) |
+| 2 | Baseline + **algorithm comparison** | Core | ▶ **Next** |
+| 5a | **Embedder comparison** (pulled forward) | Core | ☐ After 2 |
+| 3 | Quality gating, **two-tier form/assign** | Core | ☐ Not started |
 | 4 | Constrained clustering | Core | ☐ Not started |
-| 5 | Model & inference upgrade | Core | ☐ Not started |
-| 6 | Scale, storage, incremental indexing | Core | ☐ Not started |
-| 7 | API + human review UI | Core | ☐ Not started |
+| 7 | Review UI (**moved ahead of 6**) | Core | ☐ Mostly built in Phase 1 |
+| 6 | Scale & incremental indexing (**trimmed**) | Core | ☐ Deferred until measured |
+| 5b | Remaining inference work (TTA, ensembles) | Core | ☐ Not started |
 | 8 | Personalisation head (frozen backbone) | **Adaptation** | ☐ Optional — try after Phase 7 |
 | 9 | Backbone fine-tuning | **Training** | ☐ Optional — **default: SKIP** |
 | 10 | Knowledge distillation → mobile model | **Training** | ☐ Optional — **default: SKIP** |
@@ -417,14 +418,15 @@ photos, that is a finding, not a bug to hide.
 - [x] `scripts/sample_gold_set.py` — stratified sampler + **composition report asserting the targets above**
 - [x] Keyboard-driven grid labelling tool (accept-cluster / pull-out / four label keys); must also surface the noise bucket
 - [x] `scripts/verify_embedding_parity.py` — preprocessing parity against the reference implementation
-- [ ] `data/gold/labels.csv` with **~1,800 labelled faces across 25–35 identities** — *tooling done (`export_gold_set.py`); awaits the human labelling pass*
-- [ ] `src/faceindex/eval/metrics.py` implementing:
+- [x] `data/gold/labels.csv` — **2,122 judged faces, 1,499 named across 124 identities** (2026-09-21). Exceeds the ~1,800 / 25–35 target; 18 people span 5+ years, 7 span 10+
+- [x] `src/faceindex/eval/metrics.py` implementing:
   - Pairwise Precision / Recall / F1
   - BCubed Precision / Recall / F1
   - NMI / Adjusted Rand Index
   - Cluster count (predicted vs true), % faces labelled noise
-- [ ] `scripts/run_experiment.py --config configs/X.yaml` → appends one row to `data/results/results.csv`
-- [ ] A results-table renderer so you can diff experiments at a glance
+  - Contamination: junk landing inside person albums, which precision and recall cannot see
+- [x] `scripts/run_experiment.py` → appends one row to `data/results/results.csv`
+- [x] A results-table renderer so you can diff experiments at a glance
 
 **Key considerations**
 - **Deliberately over-sample hard cases** in the gold set, or your metrics will be optimistically useless:
@@ -835,7 +837,11 @@ photos, that is a finding, not a bug to hide.
 | 32 | Labelling evidence rule | **Judge from the face alone.** Identity readable in facial features → `person_N`, even in hard profile. Identity inferred from earrings, hair, clothing or who else is in the shot → `unsure` | A benchmark must be answerable from the information the system receives. Labels are never training input (decision 7), so this cannot teach the model anything — but a face whose identity is not in its pixels is an unwinnable case, and unwinnable cases **contaminate `f1_by_slice`**: the profile slice reads artificially low and sends effort chasing a number that cannot move. Also a mechanical rule, appliable identically at minute 5 and minute 90, which matters more than being theoretically optimal | 2026-09-19 | Eval ever gains access to non-facial signals (clothing, scene, co-occurrence) |
 | 33 | Noise in the gold sample | Noise enters **only** through the explicit reserve, never the greedy fill. Resampling pins already-labelled faces | **Bug found mid-labelling.** Noise is exempt from the per-person caps (right — it is not a person), but that left it untrimmed while clustered faces were cut from 37,745 to ~15,644, so noise became 63% of what the greedy fill saw. `noise_review_share` said 10%; the sample came out **63% noise**. Unclustered faces are overwhelmingly strangers and unreadable crops, so the set was on course for ~600 person labels against a ~1,400 target, discovered only at export after all the labelling was done | 2026-09-20 | Noise ever becomes the population of interest |
 | 34 | Unclustered faces in the gold set | A stratum with a **30% target**, balanced like size and pose — not excluded, not left to chance | **Measured 2026-09-21: unclustered faces are 38% readable vs 43% for clustered ones.** They are not junk; they are ordinary photographs of people who appear too rarely to reach the three-face minimum a cluster needs, or whose photo is atypical for them. That makes them the hardest material available. Both extremes are wrong: unmanaged the share hit 63% and buried the labelling in face-by-face work, while decision 33's 10% cap would have left a gold set of only the faces the baseline already groups — flattering scores, no information. Supersedes decision 33 | 2026-09-21 | Measured labelling cost proves 30% unaffordable |
-| 35 | | | | | |
+| 35 | Clustering algorithm | **An open decision, not a settled one.** Phase 2 must compare HDBSCAN, agglomerative-with-threshold, and a graph method (Chinese Whispers / rank-order) | Decision 12 only chose which *library* provided HDBSCAN, never whether density-based clustering suits faces. **Measured: 41% of the pool is unclustered, and those faces were verified by eye to be ordinary photographs of people who appear rarely.** HDBSCAN cannot group someone with two photos at any parameter setting — it is a property of the algorithm. As a product, "41% unsorted" is a bad first impression whatever the F1 says | 2026-09-22 | A comparison shows HDBSCAN wins on the gold set |
+| 36 | Two-tier clustering | Promoted from a Phase 3 aside to **core clustering design**: strict eligibility to *form* a group, loose to *join* one | Directly attacks the largest measured defect. A face too blurry to start a group can still be attached to one that exists. With 34% tiny faces and 41% unclustered, this is plausibly worth more than the model upgrade, and it was buried as a bullet in two different phases | 2026-09-22 | |
+| 37 | Phase ordering | Embedder comparison pulled ahead of gating; **review UI moved ahead of scale**; scale work trimmed to incremental indexing only | Compute time is no longer a constraint (the machine is idle most of the day), so the model ablation is cheap and worth having before tuning. Postgres/pgvector/HNSW is premature for 64k faces by the plan's own reasoning — brute force is milliseconds at this scale. The review UI is where the product becomes good, and Phase 1's labelling tool already supplies most of it | 2026-09-22 | Library grows by an order of magnitude |
+| 38 | Held-out identity split | ~20% of identities reserved, never seen during tuning, frozen in `data/gold/split.csv` | Phase 1 asked for this and it was skipped. Tuning thresholds against all 124 identities means reporting the number you optimised, which always flatters. Kept in a separate file so `labels.csv` stays frozen | 2026-09-22 | |
+| 39 | | | | | |
 
 ---
 
