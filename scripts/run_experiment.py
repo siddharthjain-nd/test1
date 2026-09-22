@@ -52,6 +52,7 @@ RESULT_COLUMNS = (
     "embedder",
     "algorithm",
     "threshold",
+    "epsilon",
     "min_cluster_size",
     "min_samples",
     "pca",
@@ -138,6 +139,9 @@ def run_once(
     seed: int,
     jobs: int,
     estimate: float | None,
+    neighbors: int = 50,
+    similarity: float = 0.5,
+    force_memory: bool = False,
     algorithm: str = "hdbscan",
     threshold: float = 0.8,
     epsilon: float = 0.0,
@@ -156,6 +160,9 @@ def run_once(
         algorithm=algorithm,
         distance_threshold=threshold,
         selection_epsilon=epsilon,
+        n_neighbors=neighbors,
+        similarity_threshold=similarity,
+        force_memory=force_memory,
     )
 
     if estimate:
@@ -286,8 +293,15 @@ def main() -> int:
     parser.add_argument(
         "--jobs",
         type=int,
-        default=-1,
-        help="Cores for the neighbour search. -1 uses all; sklearn defaults to ONE.",
+        default=cluster.default_jobs(),
+        help="Cores to use. Defaults to all but one, so the machine stays usable and memory "
+        "is not exhausted by parallel workers.",
+    )
+    parser.add_argument(
+        "--neighbors",
+        type=int,
+        default=50,
+        help="Agglomerative: neighbours per face. The main memory dial — lower it first.",
     )
     parser.add_argument(
         "--sweep", default=None, help="Comma-separated min-cluster-size values, one run each"
@@ -337,9 +351,19 @@ def main() -> int:
             )
 
     # One entry per run: (label, min_cluster_size, merge threshold).
-    if args.threshold_sweep:
+    if args.similarity_sweep:
         runs = [
-            (f"t{value}", args.min_cluster_size, float(value))
+            (f"sim{value}", args.min_cluster_size, float(value), args.epsilon)
+            for value in args.similarity_sweep.split(",")
+        ]
+    elif args.epsilon_sweep:
+        runs = [
+            (f"eps{value}", args.min_cluster_size, args.threshold, float(value))
+            for value in args.epsilon_sweep.split(",")
+        ]
+    elif args.threshold_sweep:
+        runs = [
+            (f"t{value}", args.min_cluster_size, float(value), args.epsilon)
             for value in args.threshold_sweep.split(",")
         ]
     elif args.sweep:
@@ -348,13 +372,15 @@ def main() -> int:
         runs = [(args.label or "baseline", args.min_cluster_size, args.threshold)]
 
     with store.open_index(db_path, read_only=True) as conn:
-        for auto_label, size, threshold in runs:
+        for auto_label, size, threshold, epsilon in runs:
             label = auto_label if len(runs) > 1 else (args.label or auto_label)
-            detail = (
-                f"threshold {threshold}"
-                if args.algorithm == "agglomerative"
-                else f"min cluster size {size}"
-            )
+            if args.algorithm in ("chinese_whispers", "components"):
+                shown = threshold if args.similarity_sweep else args.similarity
+                detail = f"similarity cut-off {shown}"
+            elif args.algorithm == "agglomerative":
+                detail = f"threshold {threshold}"
+            else:
+                detail = f"min cluster size {size}, epsilon {epsilon}"
             console.print(f"\n[bold]Run      :[/bold] {label} — {args.algorithm}, {detail}")
 
             metrics, predicted, n_faces, elapsed = run_once(
@@ -368,7 +394,10 @@ def main() -> int:
                 estimate=last_cluster_seconds(results_path),
                 algorithm=args.algorithm,
                 threshold=threshold,
-                epsilon=args.epsilon,
+                epsilon=epsilon,
+                neighbors=args.neighbors,
+                similarity=(threshold if args.similarity_sweep else args.similarity),
+                force_memory=args.force_memory,
             )
             console.print(f"Clustered {n_faces:,} faces in {elapsed:.0f}s.\n")
 
@@ -394,6 +423,7 @@ def main() -> int:
                 "min_cluster_size": size,
                 "algorithm": args.algorithm,
                 "threshold": threshold,
+                "epsilon": epsilon,
                 "min_samples": args.min_samples or "",
                 "pca": args.pca or "",
                 "n_faces_clustered": n_faces,
