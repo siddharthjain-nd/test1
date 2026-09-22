@@ -88,22 +88,44 @@ def show_results(path: Path) -> int:
         return 1
 
     table = Table(title="Experiments", header_style="bold")
-    for column in ("label", "min_cluster_size", "pairwise_f1", "bcubed_f1", "ari"):
-        table.add_column(column.replace("_", " "), justify="right" if "_" in column else "left")
+    table.add_column("label")
+    table.add_column("algorithm")
+    table.add_column("setting", justify="right")
+    table.add_column("BCubed P", justify="right")
+    table.add_column("BCubed R", justify="right")
+    table.add_column("BCubed F1", justify="right")
+    table.add_column("ARI", justify="right")
     table.add_column("clusters", justify="right")
     table.add_column("noise", justify="right")
 
-    best = max(rows, key=lambda r: float(r["bcubed_f1"]))
+    def number(row: dict[str, str], key: str, default: float = 0.0) -> float:
+        try:
+            return float(row.get(key) or default)
+        except ValueError:
+            return default
+
+    best = max(rows, key=lambda r: number(r, "bcubed_f1"))
     for row in rows:
         mark = " [green]*[/green]" if row is best else ""
+        algorithm = row.get("algorithm") or "hdbscan"
+        # Each algorithm is tuned by a different dial; show whichever one drove this run.
+        if algorithm in ("chinese_whispers", "components"):
+            setting = row.get("threshold") or row.get("similarity") or ""
+        elif algorithm == "agglomerative":
+            setting = row.get("threshold") or ""
+        else:
+            setting = f"mcs{row.get('min_cluster_size', '')}/eps{row.get('epsilon') or 0}"
+
         table.add_row(
             row["label"] + mark,
-            row["min_cluster_size"],
-            row["pairwise_f1"],
-            f"[bold]{row['bcubed_f1']}[/bold]",
-            row["ari"],
-            row["n_clusters_pred"],
-            f"{100 * float(row['pct_noise']):.0f}%",
+            algorithm,
+            str(setting),
+            f"{number(row, 'bcubed_p'):.3f}",
+            f"{number(row, 'bcubed_r'):.3f}",
+            f"[bold]{number(row, 'bcubed_f1'):.4f}[/bold]",
+            f"{number(row, 'ari'):.3f}",
+            row.get("n_clusters_pred", ""),
+            f"{100 * number(row, 'pct_noise'):.0f}%",
         )
     console.print(table)
     console.print(
@@ -111,6 +133,41 @@ def show_results(path: Path) -> int:
         "whoever appears most often, so one person with hundreds of faces can carry it.[/dim]"
     )
     return 0
+
+
+def append_result(path: Path, row: dict[str, object]) -> None:
+    """Append one run, migrating the file when the column set has changed.
+
+    Appending with a new field list to a file whose header is the old one writes values in
+    an order the header no longer describes -- every column after the insertion point shifts,
+    silently, and the table reads as nonsense while still looking like a table. Adding a
+    column mid-project is normal, so the file is rewritten to match instead.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing: list[dict[str, str]] = []
+    header: list[str] | None = None
+
+    if path.exists():
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            header = list(reader.fieldnames or [])
+            existing = list(reader)
+
+    if header == list(RESULT_COLUMNS):
+        with path.open("a", newline="", encoding="utf-8") as handle:
+            csv.DictWriter(handle, fieldnames=list(RESULT_COLUMNS)).writerow(
+                {k: row.get(k, "") for k in RESULT_COLUMNS}
+            )
+        return
+
+    # Schema changed (or the file is new): rewrite it whole, keeping old rows and leaving
+    # columns they never had blank.
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(RESULT_COLUMNS))
+        writer.writeheader()
+        for old in existing:
+            writer.writerow({k: old.get(k, "") for k in RESULT_COLUMNS})
+        writer.writerow({k: row.get(k, "") for k in RESULT_COLUMNS})
 
 
 def last_cluster_seconds(path: Path) -> float | None:
@@ -452,13 +509,7 @@ def main() -> int:
                 "platform": f"{platform.system()}-{platform.machine()}",
                 **metrics.as_row(),
             }
-            results_path.parent.mkdir(parents=True, exist_ok=True)
-            write_header = not results_path.exists()
-            with results_path.open("a", newline="", encoding="utf-8") as handle:
-                writer = csv.DictWriter(handle, fieldnames=list(RESULT_COLUMNS))
-                if write_header:
-                    writer.writeheader()
-                writer.writerow({k: row.get(k, "") for k in RESULT_COLUMNS})
+            append_result(results_path, row)
 
     console.print(f"\n[green]Recorded in {results_path}[/green]")
     console.print("Compare runs with: python scripts/run_experiment.py --results")
