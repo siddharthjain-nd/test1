@@ -22,8 +22,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import numpy as np
-from sklearn.cluster import HDBSCAN
+from sklearn.cluster import HDBSCAN, AgglomerativeClustering
 from sklearn.decomposition import PCA
+from sklearn.neighbors import kneighbors_graph
 
 from faceindex import embed
 
@@ -36,6 +37,22 @@ class ClusterConfig:
     # only if the full-dimension run is measurably too slow on the target machine.
     pca_components: int | None = None
     random_seed: int = 20260906
+
+    # Which algorithm. HDBSCAN groups by *density*, which is why it shatters a person into
+    # minimum-size fragments and leaves anyone with few photos unclustered. Agglomerative
+    # merges by distance instead: it has no density requirement and the threshold controls
+    # merging directly, which is the lever the measured failure actually calls for.
+    algorithm: str = "hdbscan"
+
+    # HDBSCAN only. Merges clusters closer together than this, directly countering the
+    # over-splitting the baseline showed. 0.0 disables it.
+    selection_epsilon: float = 0.0
+
+    # Agglomerative only. Distance below which two groups merge, on L2-normalised vectors
+    # where squared Euclidean is 2 - 2*cos. 0.8 corresponds to cosine similarity 0.6.
+    distance_threshold: float = 0.8
+    linkage: str = "average"
+    n_neighbors: int = 50
     # sklearn's HDBSCAN defaults n_jobs to None, which means ONE core -- so a 70-minute run
     # left three of four cores idle. Only the neighbour search parallelises; the tree and
     # hierarchy construction stay sequential, so expect a useful speedup rather than 4x.
@@ -52,6 +69,45 @@ class ClusterResult:
     @property
     def noise_fraction(self) -> float:
         return float(self.n_noise) / len(self.labels) if len(self.labels) else 0.0
+
+
+def _agglomerative(features: np.ndarray, config: ClusterConfig) -> np.ndarray:
+    """Merge groups until nothing is closer than the threshold. No density requirement.
+
+    Two properties matter here, and both address what the baseline measured. Any two faces
+    close enough become a group, so a person with two photographs is no longer discarded --
+    that alone should reclaim a large part of the 41% left unclustered. And the threshold
+    controls merging directly, rather than emerging from a density estimate, so
+    over-splitting becomes a number to tune rather than a property to live with.
+
+    The naive form needs the full 64k x 64k distance matrix, which is 32 GB. A nearest
+    neighbour graph is passed instead, so only nearby pairs are ever considered; merges are
+    then restricted to faces that are someone's neighbour, which is exactly the intent.
+    """
+    graph = kneighbors_graph(
+        features,
+        n_neighbors=min(config.n_neighbors, len(features) - 1),
+        mode="connectivity",
+        include_self=False,
+        n_jobs=config.n_jobs,
+    )
+    # Symmetrise: A being a neighbour of B must imply the reverse, or the merge order
+    # depends on which of the two happened to be listed first.
+    graph = ((graph + graph.T) > 0).astype(np.int8)
+
+    model = AgglomerativeClustering(
+        n_clusters=None,
+        distance_threshold=config.distance_threshold,
+        metric="euclidean",
+        linkage=config.linkage,
+        connectivity=graph,
+    )
+    labels: np.ndarray = model.fit_predict(features)
+
+    # Singletons are reported as ungrouped, matching HDBSCAN's convention so the two
+    # algorithms produce comparable numbers.
+    counts = np.bincount(labels)
+    return np.where(counts[labels] < 2, -1, labels)
 
 
 def bootstrap_cluster(embeddings: np.ndarray, config: ClusterConfig) -> ClusterResult:
@@ -71,15 +127,20 @@ def bootstrap_cluster(embeddings: np.ndarray, config: ClusterConfig) -> ClusterR
         # with cosine on the reduced space.
         features = embed.l2_normalise(features.astype(np.float32))
 
-    model = HDBSCAN(
-        min_cluster_size=config.min_cluster_size,
-        min_samples=config.min_samples,
-        metric="euclidean",
-        cluster_selection_method="eom",
-        n_jobs=config.n_jobs,
-    )
-    labels = model.fit_predict(features)
-    probabilities = getattr(model, "probabilities_", np.ones(len(labels)))
+    if config.algorithm == "agglomerative":
+        labels = _agglomerative(features, config)
+        probabilities = np.ones(len(labels))
+    else:
+        model = HDBSCAN(
+            min_cluster_size=config.min_cluster_size,
+            min_samples=config.min_samples,
+            metric="euclidean",
+            cluster_selection_method="eom",
+            cluster_selection_epsilon=config.selection_epsilon,
+            n_jobs=config.n_jobs,
+        )
+        labels = model.fit_predict(features)
+        probabilities = getattr(model, "probabilities_", np.ones(len(labels)))
 
     return ClusterResult(
         labels=labels,

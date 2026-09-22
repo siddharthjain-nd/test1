@@ -50,6 +50,8 @@ RESULT_COLUMNS = (
     "label",
     "split",
     "embedder",
+    "algorithm",
+    "threshold",
     "min_cluster_size",
     "min_samples",
     "pca",
@@ -136,6 +138,9 @@ def run_once(
     seed: int,
     jobs: int,
     estimate: float | None,
+    algorithm: str = "hdbscan",
+    threshold: float = 0.8,
+    epsilon: float = 0.0,
 ) -> tuple[object, object, int, float]:
     console.print("Loading embeddings…")
     face_ids, matrix = cluster.load_embeddings(conn)  # type: ignore[arg-type]
@@ -148,6 +153,9 @@ def run_once(
         pca_components=pca,
         random_seed=seed,
         n_jobs=jobs,
+        algorithm=algorithm,
+        distance_threshold=threshold,
+        selection_epsilon=epsilon,
     )
 
     if estimate:
@@ -169,6 +177,24 @@ def run_once(
         contaminants=gold.contaminants,  # type: ignore[attr-defined]
     )
     return metrics, predicted, len(face_ids), elapsed
+
+
+def _frequency_bands(identities: dict[int, str]) -> dict[int, str]:
+    """Bucket each face by how many photos its person has in the gold set."""
+    counts: dict[str, int] = {}
+    for person in identities.values():
+        counts[person] = counts.get(person, 0) + 1
+
+    def band(n: int) -> str:
+        if n >= 40:
+            return "40+ photos"
+        if n >= 15:
+            return "15-39"
+        if n >= 5:
+            return "5-14"
+        return "2-4"
+
+    return {face: band(counts[person]) for face, person in identities.items()}
 
 
 def print_report(metrics: object, slices: dict[str, list[object]]) -> None:
@@ -242,6 +268,20 @@ def main() -> int:
     parser.add_argument("--min-cluster-size", type=int, default=3)
     parser.add_argument("--min-samples", type=int, default=None)
     parser.add_argument("--pca", type=int, default=None)
+    parser.add_argument("--algorithm", choices=("hdbscan", "agglomerative"), default="hdbscan")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.8,
+        help="Agglomerative merge distance. 0.8 == cosine similarity 0.6; lower is stricter.",
+    )
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=0.0,
+        help="HDBSCAN: merge clusters closer than this. Counters over-splitting.",
+    )
+    parser.add_argument("--threshold-sweep", default=None, help="Comma-separated merge distances")
     parser.add_argument("--seed", type=int, default=20260906)
     parser.add_argument(
         "--jobs",
@@ -296,12 +336,26 @@ def main() -> int:
                 "every look costs a little of its independence.[/yellow]"
             )
 
-    sizes = [int(x) for x in args.sweep.split(",")] if args.sweep else [args.min_cluster_size]
+    # One entry per run: (label, min_cluster_size, merge threshold).
+    if args.threshold_sweep:
+        runs = [
+            (f"t{value}", args.min_cluster_size, float(value))
+            for value in args.threshold_sweep.split(",")
+        ]
+    elif args.sweep:
+        runs = [(f"mcs{value}", int(value), args.threshold) for value in args.sweep.split(",")]
+    else:
+        runs = [(args.label or "baseline", args.min_cluster_size, args.threshold)]
 
     with store.open_index(db_path, read_only=True) as conn:
-        for size in sizes:
-            label = args.label or (f"mcs{size}" if len(sizes) > 1 else "baseline")
-            console.print(f"\n[bold]Run      :[/bold] {label} (min cluster size {size})")
+        for auto_label, size, threshold in runs:
+            label = auto_label if len(runs) > 1 else (args.label or auto_label)
+            detail = (
+                f"threshold {threshold}"
+                if args.algorithm == "agglomerative"
+                else f"min cluster size {size}"
+            )
+            console.print(f"\n[bold]Run      :[/bold] {label} — {args.algorithm}, {detail}")
 
             metrics, predicted, n_faces, elapsed = run_once(
                 conn,
@@ -312,6 +366,9 @@ def main() -> int:
                 seed=args.seed,
                 jobs=args.jobs,
                 estimate=last_cluster_seconds(results_path),
+                algorithm=args.algorithm,
+                threshold=threshold,
+                epsilon=args.epsilon,
             )
             console.print(f"Clustered {n_faces:,} faces in {elapsed:.0f}s.\n")
 
@@ -319,6 +376,12 @@ def main() -> int:
                 column: score_by_slice(gold.identities, predicted, gold.slice_values(column))
                 for column in SLICE_COLUMNS
             }
+            # The other slices are confounded by this one: when clusters cap out at a few
+            # faces, anything correlated with "this person has few photos" scores well.
+            # Showing it directly makes that visible instead of misleading.
+            slices["photos_per_person"] = score_by_slice(
+                gold.identities, predicted, _frequency_bands(gold.identities)
+            )
             print_report(metrics, slices)
 
             run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"-{label}"
@@ -329,6 +392,8 @@ def main() -> int:
                 "split": args.split,
                 "embedder": "w600k_mbf.onnx",
                 "min_cluster_size": size,
+                "algorithm": args.algorithm,
+                "threshold": threshold,
                 "min_samples": args.min_samples or "",
                 "pca": args.pca or "",
                 "n_faces_clustered": n_faces,
