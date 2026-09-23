@@ -249,17 +249,23 @@ def append_result(path: Path, row: dict[str, object]) -> None:
     temporary.replace(path)
 
 
-def last_cluster_seconds(path: Path) -> float | None:
-    """How long the previous run took, used as this run's estimate.
+def last_cluster_seconds(path: Path, algorithm: str) -> float | None:
+    """How long the previous run *of this algorithm* took, used as this run's estimate.
 
-    Self-calibrating: the first run has no bar, every run after it does, and the figure comes
-    from this machine rather than a guess made on another one.
+    Matching on the algorithm matters because they differ by orders of magnitude: Chinese
+    Whispers finishes in about 15 seconds where HDBSCAN takes an hour. Estimating one from
+    the other filled the bar in seconds and left it sitting at 99% for the rest of the run,
+    which reads as a stall and tells you nothing about how far along it is.
     """
     if not path.exists():
         return None
     try:
         with path.open(newline="", encoding="utf-8") as handle:
-            rows = [r for r in csv.DictReader(handle) if r.get("t_cluster_s")]
+            rows = [
+                r
+                for r in csv.DictReader(handle)
+                if r.get("t_cluster_s") and (r.get("algorithm") or "hdbscan") == algorithm
+            ]
         return float(rows[-1]["t_cluster_s"]) if rows else None
     except (OSError, ValueError):
         return None
@@ -462,7 +468,9 @@ def main() -> int:
     parser.add_argument(
         "--force-memory",
         action="store_true",
-        help="Run agglomerative even if predicted not to fit. Close other applications first.",
+        help="Run agglomerative past the memory guard. Measured at 63,878 faces it needs "
+        "~6.1 GB and was killed on an 8 GB machine even with everything else closed — the "
+        "tree phase allocates in one burst at the end, too fast for swap to absorb.",
     )
     parser.add_argument("--seed", type=int, default=20260906)
     parser.add_argument(
@@ -571,7 +579,7 @@ def main() -> int:
                 pca=args.pca,
                 seed=args.seed,
                 jobs=args.jobs,
-                estimate=last_cluster_seconds(results_path),
+                estimate=last_cluster_seconds(results_path, args.algorithm),
                 algorithm=args.algorithm,
                 threshold=threshold,
                 epsilon=epsilon,
