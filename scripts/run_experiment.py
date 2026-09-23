@@ -150,6 +150,9 @@ def show_results(path: Path) -> int:
 
     table = Table(title="Experiments", header_style="bold")
     table.add_column("label")
+    # Without this, two sweeps of the same settings on different models are indistinguishable
+    # and the comparison has to be inferred from duplicate rows.
+    table.add_column("model")
     table.add_column("algorithm")
     table.add_column("setting", justify="right")
     table.add_column("BCubed P", justify="right")
@@ -177,8 +180,10 @@ def show_results(path: Path) -> int:
         else:
             setting = f"mcs{row.get('min_cluster_size', '')}/eps{row.get('epsilon') or 0}"
 
+        model = (row.get("embedder") or "?").replace("w600k_", "").replace(".onnx", "")
         table.add_row(
             row["label"] + mark,
+            model,
             algorithm,
             str(setting),
             f"{number(row, 'bcubed_p'):.3f}",
@@ -448,6 +453,13 @@ def main() -> int:
         "--similarity-sweep", default=None, help="Comma-separated similarity cut-offs"
     )
     parser.add_argument(
+        "--epsilon-sweep",
+        default=None,
+        help="Comma-separated HDBSCAN merge epsilons. Tunes HDBSCAN on the same footing as "
+        "the graph methods, so the comparison is between algorithms rather than between a "
+        "tuned one and an untuned one.",
+    )
+    parser.add_argument(
         "--force-memory",
         action="store_true",
         help="Run agglomerative even if predicted not to fit. Close other applications first.",
@@ -532,9 +544,12 @@ def main() -> int:
             for value in args.threshold_sweep.split(",")
         ]
     elif args.sweep:
-        runs = [(f"mcs{value}", int(value), args.threshold) for value in args.sweep.split(",")]
+        runs = [
+            (f"mcs{value}", int(value), args.threshold, args.epsilon)
+            for value in args.sweep.split(",")
+        ]
     else:
-        runs = [(args.label or "baseline", args.min_cluster_size, args.threshold)]
+        runs = [(args.label or "baseline", args.min_cluster_size, args.threshold, args.epsilon)]
 
     with store.open_index(db_path, read_only=True) as conn:
         for auto_label, size, threshold, epsilon in runs:
