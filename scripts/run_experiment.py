@@ -76,6 +76,61 @@ RESULT_COLUMNS = (
 )
 
 
+def is_sound(row: dict[str, str]) -> bool:
+    """Whether a row's values still sit under the headings that describe them.
+
+    Adding columns mid-project shifted every value in the rows written across the change, so
+    the file holds a mixture of sound and scrambled rows that look equally like data. Two
+    checks catch it: a cluster count must be a whole number, and a score must lie in [0, 1].
+    A shifted row fails one or both, because an F1 lands in the cluster column and vice versa.
+    """
+    try:
+        clusters = row.get("n_clusters_pred") or ""
+        if clusters and (float(clusters) != int(float(clusters)) or float(clusters) < 0):
+            return False
+        for key in ("bcubed_p", "bcubed_r", "bcubed_f1", "ari", "pct_noise"):
+            value = row.get(key)
+            if value and not (-1.0 <= float(value) <= 1.0):
+                return False
+    except ValueError:
+        return False
+
+    # A graph run recorded as hdbscan means the algorithm column took someone else's value.
+    setting = str(row.get("min_cluster_size") or "")
+    return "chinese_whispers" not in setting and "components" not in setting
+
+
+def prune_results(path: Path) -> int:
+    """Drop rows whose values no longer line up with their headings."""
+    if not path.exists():
+        console.print(f"[yellow]No results at {path}.[/yellow]")
+        return 1
+
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    keep = [r for r in rows if is_sound(r)]
+    dropped = len(rows) - len(keep)
+    if not dropped:
+        console.print("[green]Every row is sound. Nothing to remove.[/green]")
+        return 0
+
+    temporary = path.with_suffix(".csv.part")
+    with temporary.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(RESULT_COLUMNS))
+        writer.writeheader()
+        for row in keep:
+            writer.writerow({k: row.get(k, "") for k in RESULT_COLUMNS})
+    temporary.replace(path)
+
+    console.print(
+        f"[green]Removed {dropped} scrambled row(s); {len(keep)} kept.[/green]\n"
+        f"Re-run whatever you still need — the runs themselves were fine, only the "
+        f"bookkeeping was wrong."
+    )
+    return 0
+
+
 def show_results(path: Path) -> int:
     if not path.exists():
         console.print(f"[yellow]No results yet at {path}.[/yellow]")
@@ -85,6 +140,12 @@ def show_results(path: Path) -> int:
         rows = list(csv.DictReader(handle))
     if not rows:
         console.print("[yellow]Results file is empty.[/yellow]")
+        return 1
+
+    suspect = [r for r in rows if not is_sound(r)]
+    rows = [r for r in rows if is_sound(r)]
+    if not rows:
+        console.print("[red]Every row is scrambled. Run --prune, then re-run.[/red]")
         return 1
 
     table = Table(title="Experiments", header_style="bold")
@@ -132,6 +193,12 @@ def show_results(path: Path) -> int:
         "[dim]* best BCubed F1 so far. BCubed is the headline: pairwise is dominated by "
         "whoever appears most often, so one person with hundreds of faces can carry it.[/dim]"
     )
+    if suspect:
+        console.print(
+            f"\n[yellow]{len(suspect)} row(s) hidden[/yellow] — their values sit under the "
+            f"wrong headings, from a column added mid-project. The runs were fine; only the "
+            f"bookkeeping broke. Clear them with [bold]--prune[/bold] and re-run those settings."
+        )
     return 0
 
 
@@ -336,6 +403,11 @@ def main() -> int:
     parser.add_argument("--db", type=Path, default=None)
     parser.add_argument("--gold", type=Path, default=None)
     parser.add_argument("--results", action="store_true", help="Print the table and exit")
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="Delete rows whose values no longer match their headings, then exit.",
+    )
     parser.add_argument("--label", default=None, help="Name for this run in the table")
     parser.add_argument("--min-cluster-size", type=int, default=3)
     parser.add_argument("--min-samples", type=int, default=None)
@@ -407,6 +479,8 @@ def main() -> int:
     args = parser.parse_args()
 
     results_path = paths.results_dir() / "results.csv"
+    if args.prune:
+        return prune_results(results_path)
     if args.results:
         return show_results(results_path)
 
