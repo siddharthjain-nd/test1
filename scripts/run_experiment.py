@@ -162,12 +162,19 @@ def append_result(path: Path, row: dict[str, object]) -> None:
 
     # Schema changed (or the file is new): rewrite it whole, keeping old rows and leaving
     # columns they never had blank.
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    #
+    # Written to a sibling file and moved into place, because rewriting in situ means a
+    # Ctrl-C partway through leaves a truncated results file -- and these rows are hours of
+    # clustering. Path.replace is atomic, so the file is either the old one or the new one
+    # and never a half-written mixture. Same pattern the model downloader uses.
+    temporary = path.with_suffix(".csv.part")
+    with temporary.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(RESULT_COLUMNS))
         writer.writeheader()
         for old in existing:
             writer.writerow({k: old.get(k, "") for k in RESULT_COLUMNS})
         writer.writerow({k: row.get(k, "") for k in RESULT_COLUMNS})
+    temporary.replace(path)
 
 
 def last_cluster_seconds(path: Path) -> float | None:
