@@ -36,18 +36,35 @@ console = Console()
 
 
 def print_stats(conn: object) -> None:
-    row = conn.execute(  # type: ignore[attr-defined]
-        "SELECT COUNT(*) AS n FROM face_embeddings WHERE embed_version = ?",
-        (embed.EMBED_VERSION,),
-    ).fetchone()
-    total = conn.execute("SELECT COUNT(*) AS n FROM faces").fetchone()["n"]  # type: ignore[attr-defined]
+    """Coverage per model.
 
-    table = Table(title="Embeddings", header_style="bold")
-    table.add_column("Metric")
-    table.add_column("Value", justify="right")
-    table.add_row("Faces in pool", f"{total:,}")
-    table.add_row("Embedded", f"{row['n']:,}")
-    table.add_row("Pending", f"{total - row['n']:,}")
+    Counting every embedding against the face count made "pending" go negative once two
+    models were stored: 127,756 embeddings against 63,878 faces is complete twice over, not
+    an overflow. Coverage only means anything per model.
+    """
+    total = conn.execute("SELECT COUNT(*) AS n FROM faces").fetchone()["n"]  # type: ignore[attr-defined]
+    per_model = conn.execute(  # type: ignore[attr-defined]
+        "SELECT model, COUNT(*) AS n FROM face_embeddings WHERE embed_version = ? "
+        "GROUP BY model ORDER BY n DESC",
+        (embed.EMBED_VERSION,),
+    ).fetchall()
+
+    table = Table(title=f"Embedding coverage — {total:,} faces in the pool", header_style="bold")
+    table.add_column("Model")
+    table.add_column("Embedded", justify="right")
+    table.add_column("Pending", justify="right")
+    table.add_column("", justify="left")
+
+    if not per_model:
+        table.add_row("(none yet)", "0", f"{total:,}", "")
+    for entry in per_model:
+        pending = total - int(entry["n"])
+        table.add_row(
+            str(entry["model"]),
+            f"{int(entry['n']):,}",
+            f"{pending:,}",
+            "[green]complete[/green]" if pending <= 0 else "[yellow]incomplete[/yellow]",
+        )
     console.print(table)
 
     provenance = conn.execute(  # type: ignore[attr-defined]
@@ -155,7 +172,14 @@ def main() -> int:
 
         print_stats(conn)
 
-    console.print("\n[green]Embeddings done.[/green] Next: python scripts/bootstrap_cluster.py")
+    console.print(
+        f"\n[green]Embeddings done for {model_path.name}.[/green]\n"
+        f"Score them with:\n"
+        f"  python scripts/run_experiment.py --model {model_path.name} "
+        f"--algorithm chinese_whispers --similarity-sweep 0.30,0.40,0.50,0.60\n"
+        f"[dim](bootstrap_cluster.py was the Phase 1 pre-grouping step for labelling; "
+        f"with a gold set in place, run_experiment.py is what produces numbers.)[/dim]"
+    )
     return 0
 
 
