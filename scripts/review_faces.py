@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Serve the read-only review browser on localhost.
+"""Serve the face review tool on localhost.
 
-Read-only by design (v0): it exists to test whether the ranking puts real people first,
-before any editing is built on top of an order that might be wrong.
+Five screens. Review names piles in ranked order; Merge confirms that two groups are one
+person, which is the highest-value action because splitting is the measured dominant error;
+People repairs a person; Not filed holds what was set aside or never matched; Browse order
+shows the whole ranking.
+
+Nothing is ever deleted. Decisions are recorded about faces, so re-clustering with a better
+model costs no human work.
 
 Usage
     python scripts/review_faces.py
@@ -49,11 +54,20 @@ def main() -> int:
         console.print("Another copy may already be running. Try --port 8767.")
         return 1
 
+    if getattr(server, "review_store", None) is not None and server.review_store.stale:
+        console.print(
+            "\n[yellow]This index was built before merge suggestions existed, so the Merge "
+            "screen has nothing to compare.[/yellow] Rebuild it with "
+            "[bold]python scripts/build_review_index.py --model w600k_r50.onnx "
+            "--similarity 0.51[/bold]. Naming already done is kept: decisions are stored "
+            "against faces, not piles."
+        )
+
     console.print(f"\n[bold green]Open http://{args.host}:{args.port}[/bold green]")
     console.print(
-        "[dim]Nothing here writes to the database. Page through the first fifty piles and "
-        "judge one thing: are they people you recognise? Keys: n next, p previous, t wider "
-        "crop. 'worst' jumps to the bottom of the order, which is worth a look too.[/dim]"
+        "[dim]Review: type a name and press Enter, or s to skip, j if it is not a person, "
+        "u to undo. Merge: y same person, n different. Every action is undoable, and undo "
+        "never reaches the identities carried in from the gold set.[/dim]"
     )
     console.print("[dim]Ctrl-C to stop.[/dim]\n")
     try:

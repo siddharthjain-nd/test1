@@ -106,7 +106,7 @@ def main() -> int:
 
         console.print(f"          {len(face_ids):,} faces\n")
 
-        console.print(f"[bold]Stage 2/3[/bold] building the neighbour graph once…")
+        console.print("[bold]Stage 2/3[/bold] building the neighbour graph once…")
         jobs = args.jobs if args.jobs is not None else cluster.default_jobs()
         graph = kneighbors_graph(
             matrix.astype(np.float32),
@@ -192,7 +192,7 @@ def main() -> int:
             f".[/dim]"
         )
 
-    strictest_threshold, strictest_kind, strictest_size, strictest_members = findings[0]
+    strictest_threshold, _kind, strictest_size, strictest_members = findings[0]
     quality = Table(
         title=f"Pile at cos {strictest_threshold:.2f} versus the whole library",
         header_style="bold",

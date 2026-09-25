@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 
 # Bumped when the scanner's classification or metadata extraction changes in a way that
 # invalidates previously stored rows. Raising it forces a rescan of every file.
@@ -216,6 +216,7 @@ CREATE TABLE IF NOT EXISTS review_piles (
     score      REAL    NOT NULL,
     median_eye REAL,                -- interocular pixels: can this face be recognised
     coherence  REAL,                -- mean cosine to the pile centroid: is it one person
+    centroid   BLOB,                -- mean unit vector: what merge suggestions compare
     PRIMARY KEY (run_id, pile_id)
 );
 
@@ -230,6 +231,58 @@ CREATE TABLE IF NOT EXISTS review_members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_members_pile ON review_members(run_id, pile_id, position);
+
+-- People, as the product knows them. Seeded from the gold set's 124 identities so that
+-- 1,499 faces are attributed before review starts, and so merge suggestions have anchors on
+-- day one. The gold tables stay read-only; this is a copy, not a reference.
+CREATE TABLE IF NOT EXISTS review_people (
+    person_id    TEXT PRIMARY KEY,
+    display_name TEXT,                -- what a human typed; NULL until they name them
+    origin       TEXT NOT NULL,       -- gold | review
+    created_at   TEXT NOT NULL
+);
+
+-- Append-only. The current decision for a face is its highest id, so nothing is ever
+-- overwritten and undo is a delete of one batch rather than a guess at what came before.
+-- Decisions are about FACES, never piles: a pile id means nothing after re-clustering,
+-- while a face id comes from detection and is permanent.
+CREATE TABLE IF NOT EXISTS review_decisions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    face_id    INTEGER NOT NULL REFERENCES faces(id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL,      -- person | junk
+    person_id  TEXT,                  -- set when kind = person
+    source     TEXT    NOT NULL,      -- gold | pile | merge | manual
+    batch_id   TEXT    NOT NULL,      -- one human action; the unit of undo
+    decided_at TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_dec_face   ON review_decisions(face_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_review_dec_batch  ON review_decisions(batch_id);
+CREATE INDEX IF NOT EXISTS idx_review_dec_person ON review_decisions(person_id);
+
+-- Passed over rather than decided. Kept apart from decisions because skipping says nothing
+-- about the faces; it only means "not now".
+CREATE TABLE IF NOT EXISTS review_skips (
+    run_id     TEXT    NOT NULL,
+    pile_id    INTEGER NOT NULL,
+    skipped_at TEXT    NOT NULL,
+    PRIMARY KEY (run_id, pile_id)
+);
+
+-- "No, that is not them." Recorded per FACE rather than per pile so that it survives a
+-- re-clustering: the same rejection still applies when those faces land in a different
+-- group. It is also the negative half of the constraints a semi-supervised clustering would
+-- want later, which is why it is kept rather than merely suppressing a suggestion.
+CREATE TABLE IF NOT EXISTS review_not_person (
+    face_id    INTEGER NOT NULL REFERENCES faces(id) ON DELETE CASCADE,
+    person_id  TEXT    NOT NULL,
+    batch_id   TEXT    NOT NULL,
+    decided_at TEXT    NOT NULL,
+    PRIMARY KEY (face_id, person_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_not_person ON review_not_person(person_id);
+CREATE INDEX IF NOT EXISTS idx_review_not_batch  ON review_not_person(batch_id);
 """
 
 # Columns added after the first release, applied to existing databases on open.
@@ -237,6 +290,11 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("taken_at_source", "TEXT"),
     ("exif_modified_at", "TEXT"),
 )
+
+# Added after v0 of the review UI shipped, so an index built by v0 gains it without a rebuild
+# of the clustering. Merge suggestions compare pile centroids; storing them here avoids
+# holding 63,878 x 512 floats in the server process.
+_REVIEW_PILE_MIGRATIONS: tuple[tuple[str, str], ...] = (("centroid", "BLOB"),)
 
 
 def _migrate_embeddings_key(conn: sqlite3.Connection) -> None:
@@ -268,22 +326,37 @@ def _migrate_embeddings_key(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE face_embeddings_v1")
 
 
-def _apply_migrations(conn: sqlite3.Connection) -> None:
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(photos)")}
-    for column, column_type in _MIGRATIONS:
+def _add_missing_columns(conn: sqlite3.Connection, table: str, columns: tuple[tuple[str, str], ...]) -> None:
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for column, column_type in columns:
         if column not in existing:
-            conn.execute(f"ALTER TABLE photos ADD COLUMN {column} {column_type}")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    _add_missing_columns(conn, "photos", _MIGRATIONS)
+    _add_missing_columns(conn, "review_piles", _REVIEW_PILE_MIGRATIONS)
     _migrate_embeddings_key(conn)
 
 
-def connect(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
-    """Open the index, creating and migrating the schema if needed."""
+def connect(
+    db_path: Path, *, read_only: bool = False, check_same_thread: bool = True
+) -> sqlite3.Connection:
+    """Open the index, creating and migrating the schema if needed.
+
+    ``check_same_thread=False`` is for a connection shared between threads and guarded by a
+    lock of the caller's own -- the review server keeps one writer that way, because SQLite
+    accepts a single writer and the handler threads would otherwise each open their own.
+    Passing it without that lock is a data race.
+    """
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     if read_only:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro", uri=True, check_same_thread=check_same_thread
+        )
     else:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, check_same_thread=check_same_thread)
 
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

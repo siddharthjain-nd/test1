@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -199,7 +198,8 @@ def main() -> int:
 
     console.print(
         f"[dim]typical (median) person scores {median_f1:.4f}; the aggregate is "
-        f"{overall:.4f}; {len(weak)} of {len(people)} people are below 0.9.[/dim]\n"
+        f"{overall:.4f}; dropping the worst {len(recovered)} lifts it by {lift:+.4f}; "
+        f"{len(weak)} of {len(people)} people are below 0.9.[/dim]\n"
     )
 
     if not weak:

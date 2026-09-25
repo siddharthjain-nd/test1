@@ -40,6 +40,12 @@ def main() -> int:
     parser.add_argument("--neighbors", type=int, default=50)
     parser.add_argument("--jobs", type=int, default=None)
     parser.add_argument("--preview", type=int, default=10, help="Top N piles to print")
+    parser.add_argument(
+        "--no-seed",
+        action="store_true",
+        help="Do not carry the gold set's identities in as people. By default they are "
+        "seeded, so review starts from 124 known people instead of nothing.",
+    )
     args = parser.parse_args()
 
     db_path = args.db or paths.index_db_path()
@@ -79,10 +85,11 @@ def main() -> int:
             console.print(f"[red]{exc}[/red]")
             return 1
 
+        seeded = 0 if args.no_seed else review.seed_people_from_gold(conn)
         top = review.list_piles(conn, summary.run_id, limit=max(args.preview, 0))
         for pile in top:
             pile["faces"] = review.pile_faces(conn, summary.run_id, int(pile["pile_id"]), limit=1)
-        n_known = len(review.known_people(conn))
+        state = review.progress(conn, summary.run_id)
 
     console.print(f"          [dim]{time.perf_counter() - stage_started[0]:.0f}s[/dim]\n")
 
@@ -92,7 +99,8 @@ def main() -> int:
     overview.add_row("Faces clustered", f"{summary.n_faces:,}")
     overview.add_row("Piles (2+ faces)", f"{summary.n_piles:,}")
     overview.add_row("Lone faces set aside", f"{summary.n_lone:,}")
-    overview.add_row("People already named", f"{n_known}")
+    overview.add_row("People carried from the gold set", f"{state['people_known']}")
+    overview.add_row("Faces already attributed", f"{seeded:,}")
     overview.add_row("Built in", f"{time.perf_counter() - started:.0f}s")
     console.print(overview)
 
