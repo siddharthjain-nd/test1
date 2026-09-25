@@ -38,6 +38,8 @@ from scipy.sparse.csgraph import connected_components
 from sklearn.neighbors import kneighbors_graph
 
 from faceindex import cluster, paths, store
+from faceindex.eval.goldset import load_gold_set
+from faceindex.eval.split import HOLDOUT, load_split
 
 console = Console()
 
@@ -61,6 +63,11 @@ def main() -> int:
     parser.add_argument("--neighbors", type=int, default=50)
     parser.add_argument("--jobs", type=int, default=None)
     parser.add_argument("--limit", type=int, default=None, help="Trial run on N faces")
+    parser.add_argument(
+        "--include-holdout",
+        action="store_true",
+        help="Do not drop reserved identities. Off by default: the holdout gets read once.",
+    )
     args = parser.parse_args()
 
     thresholds = sorted(float(t) for t in args.thresholds.split(","))
@@ -82,6 +89,40 @@ def main() -> int:
 
         console.print(f"[bold]Stage 1/3[/bold] loading embeddings for {model}…")
         face_ids, matrix = cluster.load_embeddings(conn, model=model, limit=args.limit)
+
+    # The holdout is spent the first time it influences a decision, and choosing a
+    # threshold is a decision. Its faces are a fraction of a percent of the pool, so
+    # dropping them costs nothing here and keeps the one reserved measurement clean.
+    if not args.include_holdout:
+        split_path = paths.gold_dir() / "split.csv"
+        gold_path = paths.gold_dir() / "labels.csv"
+        if split_path.exists() and gold_path.exists():
+            reserved = load_split(split_path).people(HOLDOUT)
+            gold = load_gold_set(gold_path)
+            drop = {f for f, person in gold.identities.items() if person in reserved}
+            keep = [i for i, f in enumerate(face_ids) if f not in drop]
+            removed = len(face_ids) - len(keep)
+            face_ids = [face_ids[i] for i in keep]
+            matrix = matrix[keep]
+            console.print(
+                f"          dropped {removed:,} face(s) belonging to {len(reserved)} "
+                f"reserved identities [dim](--include-holdout to keep them)[/dim]"
+            )
+            # Dropping nothing while identities are reserved means the exclusion did not
+            # work -- a mismatched label vocabulary, say. Silently continuing would spend
+            # the holdout without anyone noticing, so refuse instead.
+            if reserved and not removed:
+                console.print(
+                    "[red]Reserved identities are listed but none of their faces were "
+                    "found.[/red] The gold set and the split disagree, so the holdout "
+                    "cannot be protected. Check data/gold/labels.csv against split.csv, "
+                    "or pass --include-holdout deliberately."
+                )
+                return 1
+        else:
+            console.print(
+                "[yellow]          no gold split found; running on every face.[/yellow]"
+            )
 
     if len(face_ids) < 2:
         console.print("[red]Not enough embedded faces.[/red]")
