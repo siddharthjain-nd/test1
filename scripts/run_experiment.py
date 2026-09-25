@@ -562,9 +562,9 @@ def main() -> int:
     with store.open_index(db_path, read_only=True) as conn:
         for auto_label, size, threshold, epsilon in runs:
             label = auto_label if len(runs) > 1 else (args.label or auto_label)
+            effective_similarity = threshold if args.similarity_sweep else args.similarity
             if args.algorithm in ("chinese_whispers", "components"):
-                shown = threshold if args.similarity_sweep else args.similarity
-                detail = f"similarity cut-off {shown}"
+                detail = f"similarity cut-off {effective_similarity}"
             elif args.algorithm == "agglomerative":
                 detail = f"threshold {threshold}"
             else:
@@ -584,7 +584,7 @@ def main() -> int:
                 threshold=threshold,
                 epsilon=epsilon,
                 neighbors=args.neighbors,
-                similarity=(threshold if args.similarity_sweep else args.similarity),
+                similarity=effective_similarity,
                 force_memory=args.force_memory,
                 model=args.model,
             )
@@ -611,7 +611,15 @@ def main() -> int:
                 "embedder": args.model or "auto",
                 "min_cluster_size": size,
                 "algorithm": args.algorithm,
-                "threshold": threshold,
+                # Record the dial that actually drove THIS run. Without this, a single
+                # --similarity run logged args.threshold instead -- the agglomerative
+                # default of 0.8 -- so the permanent record disagreed with what was run.
+                # The sweeps happened to be right because they overwrite `threshold`.
+                "threshold": (
+                    effective_similarity
+                    if args.algorithm in ("chinese_whispers", "components")
+                    else threshold
+                ),
                 "epsilon": epsilon,
                 "min_samples": args.min_samples or "",
                 "pca": args.pca or "",
