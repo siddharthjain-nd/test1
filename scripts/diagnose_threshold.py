@@ -236,6 +236,27 @@ def main() -> int:
         )
         return 0
 
+    # The whole "loosest safe setting" reading assumes the strictest value tried is itself
+    # clean. If a large pile already exists there, tightening further will not dissolve it
+    # and the merge that created it happened above this range -- or is not a merge at all
+    # but a heap of faces the model cannot tell apart. Either way, say so: "steady" across
+    # the range is reassuring only when the thing staying steady is small.
+    first = int(rows[0]["largest"])
+    if first / n > 0.02:
+        console.print(
+            f"\n[bold yellow]Careful: the biggest pile is already {first:,} faces "
+            f"({100 * first / n:.1f}% of the library) at cos "
+            f"{float(rows[0]['threshold']):.2f}, the strictest value tried.[/bold yellow]"
+        )
+        console.print(
+            "Tightening the setting did not break it up, so it is not the threshold that "
+            "built it. Either one person really is that photographed, or a mass of faces the "
+            "model cannot distinguish has collapsed together. Find out before trusting any "
+            "setting below:\n"
+            f"  [bold]python scripts/inspect_pile.py --model {model} "
+            f"--similarity {float(rows[0]['threshold']):.2f} --contact-sheet[/bold]"
+        )
+
     safe = float(rows[weld_index - 1]["threshold"])
     console.print(
         f"\n[bold]Weld at cos {float(rows[weld_index]['threshold']):.2f} — "
