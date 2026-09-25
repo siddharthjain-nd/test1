@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Bumped when the scanner's classification or metadata extraction changes in a way that
 # invalidates previously stored rows. Raising it forces a rescan of every file.
@@ -189,6 +189,47 @@ CREATE TABLE IF NOT EXISTS gold_labels (
 
 CREATE INDEX IF NOT EXISTS idx_gold_labels_person ON gold_labels(person_id);
 CREATE INDEX IF NOT EXISTS idx_gold_labels_label  ON gold_labels(label);
+
+-- The review layer. Kept apart from bootstrap_clusters, which belongs to Phase 1 labelling
+-- and must not be clobbered: write_clusters() empties that table wholesale.
+--
+-- A run is one clustering of the whole pool with a stated model and threshold. Several may
+-- coexist so a better model can be indexed and compared before the old one is discarded.
+CREATE TABLE IF NOT EXISTS review_runs (
+    run_id     TEXT    PRIMARY KEY,
+    model      TEXT    NOT NULL,
+    algorithm  TEXT    NOT NULL,
+    threshold  REAL    NOT NULL,
+    n_faces    INTEGER NOT NULL,   -- faces clustered, including the ungrouped
+    n_piles    INTEGER NOT NULL,   -- groups of two or more; lone faces are not piles
+    n_lone     INTEGER NOT NULL,
+    created_at TEXT    NOT NULL
+);
+
+-- One group of two or more faces. `score` is the review order and is the whole point of
+-- this table: the components are stored beside it so a human can see why a pile ranked
+-- where it did, rather than being asked to trust a number.
+CREATE TABLE IF NOT EXISTS review_piles (
+    run_id     TEXT    NOT NULL REFERENCES review_runs(run_id) ON DELETE CASCADE,
+    pile_id    INTEGER NOT NULL,
+    n_faces    INTEGER NOT NULL,
+    score      REAL    NOT NULL,
+    median_eye REAL,                -- interocular pixels: can this face be recognised
+    coherence  REAL,                -- mean cosine to the pile centroid: is it one person
+    PRIMARY KEY (run_id, pile_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_piles_score ON review_piles(run_id, score DESC);
+
+CREATE TABLE IF NOT EXISTS review_members (
+    run_id   TEXT    NOT NULL,
+    face_id  INTEGER NOT NULL REFERENCES faces(id) ON DELETE CASCADE,
+    pile_id  INTEGER NOT NULL,   -- -1 means ungrouped: it linked to nothing
+    position INTEGER NOT NULL,   -- order within the pile, most recognisable face first
+    PRIMARY KEY (run_id, face_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_members_pile ON review_members(run_id, pile_id, position);
 """
 
 # Columns added after the first release, applied to existing databases on open.

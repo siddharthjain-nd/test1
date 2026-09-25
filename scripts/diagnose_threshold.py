@@ -167,20 +167,29 @@ def main() -> int:
             {
                 "threshold": threshold,
                 "clusters": len(counts),
+                # A lone face that linked to nothing is a "component" but not a pile anyone
+                # would review. Counting it as one made the pile count look ten times worse
+                # than the job actually is, so the three are reported separately.
+                "singles": int((counts == 1).sum()),
+                "real": int((counts >= 2).sum()),
+                "worth_naming": int((counts >= 5).sum()),
                 "largest": int(counts[0]),
                 "grouped": int(n - (counts == 1).sum()),
             }
         )
         console.print(
-            f"  [{i}/{len(thresholds)}] cos {threshold:.2f}: largest pile "
-            f"{int(counts[0]):,}  [dim]{time.perf_counter() - step:.0f}s[/dim]"
+            f"  [{i}/{len(thresholds)}] cos {threshold:.2f}: "
+            f"{int((counts >= 2).sum()):,} piles, {int((counts == 1).sum()):,} lone faces, "
+            f"largest {int(counts[0]):,}  [dim]{time.perf_counter() - step:.0f}s[/dim]"
         )
 
     table = Table(
         title=f"Connected components across the whole pool — {model}", header_style="bold"
     )
     table.add_column("cos")
-    table.add_column("piles", justify="right")
+    table.add_column("piles 2+", justify="right")
+    table.add_column("piles 5+", justify="right")
+    table.add_column("lone faces", justify="right")
     table.add_column("biggest pile", justify="right")
     table.add_column("grew by", justify="right")
     table.add_column("reading")
@@ -219,7 +228,9 @@ def main() -> int:
             growth, reading = f"x{factor:.1f}", "[green]steady[/green]"
         table.add_row(
             f"{float(row['threshold']):.2f}",
-            f"{int(row['clusters']):,}",
+            f"{int(row['real']):,}",
+            f"{int(row['worth_naming']):,}",
+            f"{int(row['singles']):,}",
             f"{int(row['largest']):,}",
             growth,
             reading,
