@@ -33,8 +33,14 @@ FACES_PER_PILE = 24
 class ReviewStore:
     """Reads on a fresh connection per call; writes serialised through one."""
 
-    def __init__(self, db_path: Path, run_id: str | None = None) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        run_id: str | None = None,
+        merge_floor: float = review.MIN_SUGGESTION,
+    ) -> None:
         self.db_path = db_path
+        self.merge_floor = merge_floor
         self._write_lock = threading.Lock()
         self._writer: sqlite3.Connection | None = None
         with self._open() as conn:
@@ -121,9 +127,15 @@ class ReviewStore:
                 "faces, not piles)."
             )
         with self._open() as conn:
-            found = review.merge_candidates(conn, self.run_id, limit=1)
+            found = review.merge_candidates(
+                conn, self.run_id, limit=1, min_similarity=self.merge_floor
+            )
             return {
                 "suggestion": found[0] if found else None,
+                "remaining": review.merge_queue_size(
+                    conn, self.run_id, min_similarity=self.merge_floor
+                ),
+                "floor": self.merge_floor,
                 "progress": review.progress(conn, self.run_id),
             }
 
@@ -368,9 +380,14 @@ def _int(query: dict[str, list[str]], key: str, default: int) -> int:
 
 
 def serve(
-    db_path: Path, *, host: str = "127.0.0.1", port: int = 8766, run_id: str | None = None
+    db_path: Path,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8766,
+    run_id: str | None = None,
+    merge_floor: float = review.MIN_SUGGESTION,
 ) -> ThreadingHTTPServer:
-    data = ReviewStore(db_path, run_id)
+    data = ReviewStore(db_path, run_id, merge_floor)
     server = ThreadingHTTPServer((host, port), make_handler(data))
     # The launcher warns about a stale index before the browser is even opened.
     server.review_store = data  # type: ignore[attr-defined]
@@ -740,6 +757,7 @@ function sideBySide(s) {
        <span class="rank">Same person?</span>
        <span class="stat">similarity <b>${s.similarity.toFixed(2)}</b></span>
        <span class="stat"><b>${s.undecided}</b> faces would be filed</span>
+       <span class="stat" id="queue"></span>
      </div>
      <div class="stat" style="margin:6px 0 4px"><b>${label}</b> — already known</div>`;
   el.appendChild(faceGrid(s.person_faces, s.person_faces.length));
@@ -768,6 +786,8 @@ async function loadMerge() {
       return;
     }
     $("suggestion").appendChild(sideBySide(suggestion));
+    $("queue").textContent =
+      `${data.remaining.toLocaleString()} pairs waiting at floor ${data.floor}`;
     $("same").disabled = $("different").disabled = false;
   } catch (e) {
     say2(e.message, "err");

@@ -1370,3 +1370,45 @@ def test_splitting_none_of_a_persons_faces_is_refused(tmp_path: Path) -> None:
         anita = str(review.people(conn)[0]["person_id"])
         with pytest.raises(ValueError, match="belong to that person"):
             review.split_person(conn, anita, [9999], "Bharat")
+
+
+def test_the_merge_floor_controls_how_many_pairs_are_offered(tmp_path: Path) -> None:
+    """Siddharth's report: too many suggestions. The floor is the dial, and it is measurable."""
+    db_path = _seed_split_person(tmp_path)
+    with store.open_index(db_path) as conn:
+        review.build_index(
+            conn, model=MODEL, cluster_fn=_fake_clusterer([0] * 6 + [1] * 5 + [2] * 4)
+        )
+        review.assign_pile(conn, RUN, 0, name="Anita")
+        loose = review.merge_queue_size(conn, RUN, min_similarity=0.0)
+        strict = review.merge_queue_size(conn, RUN, min_similarity=0.95)
+    assert loose >= 1
+    assert strict == 0
+    assert loose >= strict
+
+
+def test_merge_endpoint_reports_how_many_are_waiting(merge_server: str) -> None:
+    data = json.loads(_get(merge_server + "/api/merge")[2])
+    assert data["remaining"] >= 1
+    assert data["floor"] == review.MIN_SUGGESTION
+
+
+def test_a_high_floor_empties_the_queue(tmp_path: Path) -> None:
+    db_path = _seed_split_person(tmp_path)
+    with store.open_index(db_path) as conn:
+        review.build_index(
+            conn, model=MODEL, cluster_fn=_fake_clusterer([0] * 6 + [1] * 5 + [2] * 4)
+        )
+        review.assign_pile(conn, RUN, 0, name="Anita")
+    server = reviewui.serve(db_path, port=0, merge_floor=0.99)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        data = json.loads(_get(f"http://127.0.0.1:{port}/api/merge")[2])
+        assert data["suggestion"] is None
+        assert data["remaining"] == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

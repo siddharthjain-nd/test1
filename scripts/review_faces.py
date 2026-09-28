@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from rich.console import Console
 
-from faceindex import paths, reviewui
+from faceindex import paths, review, reviewui
 
 console = Console()
 
@@ -37,6 +37,13 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--run", default=None, help="Which review run; default is the newest")
+    parser.add_argument(
+        "--merge-floor",
+        type=float,
+        default=None,
+        help="Similarity a merge suggestion must reach. Higher means fewer, better pairs. "
+        "Measure the right value with scripts/tune_merge_threshold.py.",
+    )
     args = parser.parse_args()
 
     db_path = args.db or paths.index_db_path()
@@ -45,7 +52,15 @@ def main() -> int:
         return 1
 
     try:
-        server = reviewui.serve(db_path, host=args.host, port=args.port, run_id=args.run)
+        server = reviewui.serve(
+            db_path,
+            host=args.host,
+            port=args.port,
+            run_id=args.run,
+            merge_floor=(
+                args.merge_floor if args.merge_floor is not None else review.MIN_SUGGESTION
+            ),
+        )
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         return 1

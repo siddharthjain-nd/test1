@@ -696,18 +696,13 @@ def person_centroids(
     return people_ids, embed.l2_normalise(np.stack(vectors))
 
 
-def merge_candidates(
-    conn: sqlite3.Connection,
-    run_id: str,
-    *,
-    limit: int = 1,
-    min_similarity: float = MIN_SUGGESTION,
-) -> list[dict[str, object]]:
-    """The strongest unanswered "are these the same person?" pairs, best first.
+def _merge_pairs(
+    conn: sqlite3.Connection, run_id: str, min_similarity: float
+) -> list[tuple[float, str, int]]:
+    """Every unanswered (person, pile) pair above the floor, strongest first.
 
-    A pair is offered only when the pile still has undecided faces (there is something to
-    gain), the person does not already own most of it, and nobody has said no to this
-    pairing before.
+    A pair qualifies only when the pile still has undecided faces (there is something to
+    gain) and nobody has already said no to this pairing.
     """
     people_ids, person_matrix = person_centroids(conn, run_id)
     pile_ids, pile_matrix = _pile_centroids(conn, run_id)
@@ -718,8 +713,7 @@ def merge_candidates(
         int(r["pile_id"])
         for r in conn.execute(
             "SELECT DISTINCT m.pile_id FROM review_members m "
-            "WHERE m.run_id = ? AND m.pile_id >= 0 AND "
-            + _OPEN_FACE.format(face="m.face_id"),
+            "WHERE m.run_id = ? AND m.pile_id >= 0 AND " + _OPEN_FACE.format(face="m.face_id"),
             (run_id,),
         )
     }
@@ -744,8 +738,19 @@ def merge_candidates(
             value = float(similarity[row, column])
             if value >= min_similarity:
                 pairs.append((value, person_id, pile_id))
-
     pairs.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return pairs
+
+
+def merge_candidates(
+    conn: sqlite3.Connection,
+    run_id: str,
+    *,
+    limit: int = 1,
+    min_similarity: float = MIN_SUGGESTION,
+) -> list[dict[str, object]]:
+    """The strongest unanswered "are these the same person?" pairs, best first."""
+    pairs = _merge_pairs(conn, run_id, min_similarity)
     names = {
         str(r["person_id"]): r["display_name"]
         for r in conn.execute("SELECT person_id, display_name FROM review_people")
@@ -770,6 +775,13 @@ def merge_candidates(
             }
         )
     return out
+
+
+def merge_queue_size(
+    conn: sqlite3.Connection, run_id: str, *, min_similarity: float = MIN_SUGGESTION
+) -> int:
+    """How many pairs are waiting. Without it the merge screen feels bottomless."""
+    return len(_merge_pairs(conn, run_id, min_similarity))
 
 
 def person_face_sample(
