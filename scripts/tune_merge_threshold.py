@@ -31,7 +31,7 @@ import numpy as np
 from rich.console import Console
 from rich.table import Table
 
-from faceindex import paths, review, store
+from faceindex import embed, paths, review, store
 from faceindex.eval import load_gold_set
 from faceindex.eval.split import HOLDOUT, load_split
 
@@ -46,6 +46,14 @@ def main() -> int:
     )
     parser.add_argument("--db", type=Path, default=None)
     parser.add_argument("--run", default=None, help="Default: the newest review index")
+    parser.add_argument(
+        "--method",
+        default="both",
+        choices=["centroid", "closest", "both"],
+        help="How two piles are compared. 'centroid' is the average face of each (what the "
+        "merge screen uses today). 'closest' is the single most similar pair of faces "
+        "between them, which averaging destroys.",
+    )
     parser.add_argument(
         "--purity",
         type=float,
@@ -105,19 +113,14 @@ def main() -> int:
         )
         return 1
 
-    positions = [index[p] for p in judged]
-    block = matrix[positions]
-    similarity = block @ block.T
     same = np.array([[identity[a] == identity[b] for b in judged] for a in judged])
     upper = np.triu(np.ones_like(same, dtype=bool), k=1)
-
-    values = similarity[upper]
     is_same = same[upper]
     n_same = int(is_same.sum())
 
     console.print(
         f"[bold]{len(judged)} piles[/bold] carry enough labelled faces to judge, giving "
-        f"{len(values):,} pairs — {n_same} of them genuinely the same person.\n"
+        f"{int(upper.sum()):,} pairs \u2014 {n_same} of them genuinely the same person.\n"
     )
     if not n_same:
         console.print(
@@ -126,58 +129,109 @@ def main() -> int:
         )
         return 0
 
-    table = Table(title="If suggestions needed this similarity", header_style="bold")
-    for column in ("cosine", "suggested", "of those, right", "same-people found", "wasted looks"):
-        table.add_column(column, justify="right" if column != "cosine" else "left")
+    scores: dict[str, np.ndarray] = {}
+    if args.method in ("centroid", "both"):
+        block = matrix[[index[p] for p in judged]]
+        scores["average face"] = (block @ block.T)[upper]
 
-    best: tuple[float, float] = (0.0, 0.0)
-    for cut in BANDS:
-        offered = values >= cut
-        n_offered = int(offered.sum())
-        if not n_offered:
-            table.add_row(f"{cut:.2f}", "0", "—", "0%", "0")
-            continue
-        right = int((offered & is_same).sum())
-        precision = right / n_offered
-        recall = right / n_same
-        f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
-        if f1 > best[1]:
-            best = (cut, f1)
-        table.add_row(
-            f"{cut:.2f}",
-            f"{n_offered:,}",
-            f"{precision:.0%}",
-            f"{recall:.0%}",
-            f"{n_offered - right:,}",
+    if args.method in ("closest", "both"):
+        console.print("[dim]Loading face vectors for the closest-pair comparison\u2026[/dim]")
+        members: dict[int, list[int]] = {}
+        for row in rows:
+            pile_id = int(row["pile_id"])
+            if pile_id in identity:
+                members.setdefault(pile_id, []).append(int(row["face_id"]))
+        wanted = sorted({f for p in judged for f in members.get(p, [])})
+        with store.open_index(db_path, read_only=True) as conn:
+            marks = ",".join("?" * len(wanted))
+            found = conn.execute(
+                f"SELECT face_id, embedding FROM face_embeddings WHERE face_id IN ({marks}) "
+                "AND model = (SELECT model FROM review_runs WHERE run_id = ?) ORDER BY face_id",
+                (*wanted, run_id),
+            ).fetchall()
+        order = {int(r["face_id"]): i for i, r in enumerate(found)}
+        faces = embed.l2_normalise(
+            embed.load_matrix([bytes(r["embedding"]) for r in found]).astype(np.float32)
         )
-    console.print(table)
+        console.print(f"[dim]  {len(found):,} faces across {len(judged)} piles[/dim]\n")
 
-    current = 0.30
-    offered_now = int((values >= current).sum())
-    right_now = int(((values >= current) & is_same).sum())
+        closest = np.zeros((len(judged), len(judged)), dtype=np.float32)
+        blocks = [
+            faces[[order[f] for f in members.get(p, []) if f in order]] for p in judged
+        ]
+        for i in range(len(judged)):
+            for j in range(i + 1, len(judged)):
+                if len(blocks[i]) and len(blocks[j]):
+                    closest[i, j] = closest[j, i] = float((blocks[i] @ blocks[j].T).max())
+        scores["closest pair"] = closest[upper]
+
+    recommended: dict[str, tuple[float, float, int, int]] = {}
+    for name, values in scores.items():
+        table = Table(
+            title=f"If suggestions compared the {name}", header_style="bold"
+        )
+        for column in ("score", "questions", "right", "splits found", "wasted"):
+            table.add_column(column, justify="right" if column != "score" else "left")
+
+        best: tuple[float, float] = (0.0, -1.0)
+        for cut in BANDS:
+            offered = values >= cut
+            n_offered = int(offered.sum())
+            if not n_offered:
+                table.add_row(f"{cut:.2f}", "0", "\u2014", "0%", "0")
+                continue
+            right = int((offered & is_same).sum())
+            precision = right / n_offered
+            recall = right / n_same
+            f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+            if f1 > best[1]:
+                best = (cut, f1)
+            table.add_row(
+                f"{cut:.2f}",
+                f"{n_offered:,}",
+                f"{precision:.0%}",
+                f"{recall:.0%}",
+                f"{n_offered - right:,}",
+            )
+        console.print(table)
+        at_best = values >= best[0]
+        recommended[name] = (
+            best[0],
+            float((at_best & is_same).sum()) / max(int(at_best.sum()), 1),
+            int(at_best.sum()),
+            int((at_best & is_same).sum()),
+        )
+
     console.print()
-    console.print(
-        f"[bold]At the current 0.30:[/bold] {offered_now:,} pairs offered, {right_now} of them "
-        f"the same person — "
-        f"{'[red]' if offered_now and right_now / offered_now < 0.3 else '[green]'}"
-        f"{(right_now / offered_now if offered_now else 0):.0%} useful[/]."
-    )
-    at_best = int((values >= best[0]).sum())
-    direction = (
-        "Raising" if best[0] > current else "Lowering" if best[0] < current else "Leaving"
-    )
-    change = (
-        f"cuts the queue from {offered_now:,} pairs to {at_best:,}"
-        if at_best < offered_now
-        else f"grows the queue from {offered_now:,} pairs to {at_best:,}"
-        if at_best > offered_now
-        else f"keeps the queue at {at_best:,} pairs"
-    )
-    console.print(
-        f"[bold green]Best balance at cosine {best[0]:.2f}.[/bold green] {direction} the floor "
-        f"to there {change}, while finding "
-        f"{int(((values >= best[0]) & is_same).sum()) / n_same:.0%} of the splits.\n"
-    )
+    for name, (cut, precision, offered, right) in recommended.items():
+        verdict = (
+            "[green]worth asking[/green]"
+            if precision >= 0.5
+            else "[yellow]marginal[/yellow]"
+            if precision >= 0.25
+            else "[red]not worth asking[/red]"
+        )
+        console.print(
+            f"[bold]{name}[/bold]: best at {cut:.2f} \u2014 {offered} questions, {right} right "
+            f"({precision:.0%}) \u2014 {verdict}"
+        )
+
+    winner = max(recommended.items(), key=lambda kv: kv[1][1], default=None)
+    console.print()
+    if winner is None or winner[1][1] < 0.25:
+        console.print(
+            "[bold red]VERDICT: merge suggestions are not earning their place.[/bold red] "
+            "No comparison separates the real splits from look-alikes well enough to be "
+            "worth interrupting you. The honest options are to drop the screen, or to keep "
+            "it only for the very top few pairs and accept that most splits go unfound."
+        )
+    else:
+        console.print(
+            f"[bold green]VERDICT: use the {winner[0]} at {winner[1][0]:.2f}.[/bold green] "
+            f"{winner[1][2]} questions, {winner[1][3]} of them real "
+            f"({winner[1][1]:.0%} useful)."
+        )
+
     console.print(
         "[dim]'wasted looks' is pairs you would be shown that are different people. "
         "Read the table for the trade you want: a lower cut finds more splits and costs "
