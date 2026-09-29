@@ -27,9 +27,11 @@ and weights are downloaded, never committed.
 | **PLAN.md** | The plan of record. 14 phases, decision log, risk register, quality compromise register. |
 | **DEVLOG.md** | Append-only work log. Newest first. What was done, decided, measured, and what went wrong. |
 | **README.md** | Install and run instructions, including the Linux quickstart. |
+| **docs/theory.html** | How the method works and what every measurement meant, with diagrams. One self-contained file, no network. Open it in a browser. |
 
 If a question is "why is it built this way?", the answer is in **PLAN.md section 6 (Decision
-Log)**. If it is "what happened when we tried it?", the answer is in **DEVLOG.md**.
+Log)**. If it is "what happened when we tried it?", the answer is in **DEVLOG.md**. If it is
+"how does any of this actually work?", open **docs/theory.html**.
 
 ---
 
@@ -50,69 +52,50 @@ which changes embeddings, which makes experiment results incomparable.
 
 ---
 
-## 4. Current state (2026-09-11)
+## 4. Current state (2026-09-29)
 
-**Phase 0 complete. Phase 1 in progress — every automated step is built; the human
-labelling pass is what remains.**
+**Phases 0, 1 and 2 are complete and measured. Phase 7 (review UI) is built to v3 and
+working. One question is open and it gates everything else.**
 
 | Step | Status |
 |---|---|
 | Repo, env, model download + checksum lock | done |
 | Corpus scan, dedup, classification, date recovery | done |
-| Face pool: detect + align + attributes | done |
-| Embeddings (MobileFaceNet) | **code done, not yet run on the corpus** |
-| Bootstrap clustering | **code done, not yet run** |
-| Stratified sampler + composition report | **code done, not yet run** |
-| Labelling UI | **code done, not yet run** |
-| `data/gold/labels.csv` | **blocked on the human labelling pass** |
-| Evaluation harness (metrics) | not started |
-| `run_experiment.py` + results table | not started |
+| Face pool: detect + align + attributes | done — 63,878 faces from 18,366 files |
+| Embeddings | done for **three** models: MobileFaceNet, ResNet50, ResNet100 |
+| Gold set `data/gold/labels.csv` | done — 2,122 labels, 1,499 identity faces, 124 people |
+| Held-out split `data/gold/split.csv` | frozen — 100 tune / 24 reserved identities |
+| Evaluation harness, `run_experiment.py`, results table | done |
+| Algorithm + model comparison | done — see PLAN.md decisions 39 and 40 |
+| Threshold chosen at full scale | done — PLAN.md decision 41 |
+| **Held-out score** | **done, spent once: BCubed F1 0.9394** |
+| Review UI (Phase 7) | v0–v3 built, 112 tests, verified end to end |
+| Review workload — how many piles must be named | **open, unmeasured** |
 
-Everything above the labelling line is automated and runs unattended. The labelling pass
-is the real bottleneck of Phase 1 — a few hundred keystrokes, not CPU time.
+### The headline number
 
-### Measured corpus
+**ResNet50 + connected components at cosine 0.51.** On the 24 reserved identities, never used
+for tuning: BCubed **precision 0.976, recall 0.906, F1 0.9394**, 27 piles for 24 people. On the
+tuning half, 0.9606. The gap is within the spread of a 24-person score and traces to one bucket
+of 51 faces.
 
-`/media/siddharth/Elements/B/Photos Timeline`, 22,027 files, 62.3 GB.
+The holdout is **spent**. Any further tuning goes back to the tuning half; a fresh measurement
+would need newly reserved identities.
 
-| Kind | Files | Size |
-|---|---|---|
-| photo | 13,345 | 29.8 GB |
-| forwarded (messaging apps) | 6,080 | 2.8 GB |
-| video (skipped, never read) | 1,321 | 25.8 GB |
-| screenshot | 989 | 0.5 GB |
-| audio | 236 | 2.1 GB |
-| unsupported / unreadable / archive / tiny | 56 | 1.4 GB |
+### The one open question
 
-- **18,366 unique face candidates** after removing 1,215 duplicates
-- Dates: 94.8% resolved (61.3% EXIF capture tags, 32.0% filenames, 1.5% EXIF modified)
-- Era span **2007–2025**, peaks at 2016 (2,906) and 2022 (2,561), plus 2024 (2,773)
-- 15+ camera models, from a 2006 Nokia 6233 to a Canon EOS 1500D
+Pile sizes are extremely lopsided — 106 piles hold 26,358 faces. If a few hundred names cover
+most of a library, the review design holds. If it takes thousands, it does not, and the
+clustering must join more per pile or poor faces must be kept out of the queue.
 
-### Measured face pool
+`python scripts/coverage_curve.py` answers it and has not been run. **It outranks any
+remaining threshold work.**
 
-**63,878 faces from 18,366 photos = 3.48 faces/photo.** 102 minutes on the i3, 3 errors.
+### Errors that remain, consistent across both halves of the gold set
 
-| Size (inter-ocular px) | Share |
-|---|---|
-| tiny <20 | 33.8% |
-| small 20–40 | 25.4% |
-| medium 40–80 | 22.1% |
-| large >80 | 18.7% |
-
-| Pose | Share |
-|---|---|
-| frontal <15 deg | 48.1% |
-| semi 15–45 | 31.0% |
-| profile >45 | 20.9% |
-
-Faces per photo: `photo` 3.41, `forwarded` 3.64.
-
-**Open question:** 34% of faces are under 20 px inter-ocular. Are they genuine small faces in
-crowd shots, or detector false positives? Run `scripts/contact_sheet.py --bucket tiny` and
-look before setting any gating threshold.
-
----
+Bad-quality faces 0.515, tiny faces 0.89, marginal quality 0.91, profile 0.89, middle era 0.90.
+Every one is about the face being hard to read. Slices that *reverse* between the halves
+(photos-per-person, beauty-filtered) are noise on 221 faces and must not be read as findings.
 
 ## 5. Commands
 
@@ -130,11 +113,28 @@ python scripts/contact_sheet.py --bucket tiny      # look at the crops
 
 # Gold set, in order. Each prints what to run next.
 python scripts/verify_embedding_parity.py          # run once per machine, before labelling
-python scripts/embed_faces.py                      # MobileFaceNet over the pool; resumable
+python scripts/embed_faces.py --model w600k_r50.onnx   # resumable; --stats to check coverage
 python scripts/bootstrap_cluster.py                # throwaway pre-grouping for labelling
 python scripts/sample_gold_set.py                  # stratified sample + composition report
 python scripts/label_gold_set.py                   # the only manual step; opens a browser
 python scripts/export_gold_set.py                  # freeze to data/gold/labels.csv
+python scripts/make_holdout.py                     # freeze data/gold/split.csv
+
+# Experiments and the measurements that chose the settings.
+python scripts/run_experiment.py --results         # every run ever recorded
+python scripts/run_experiment.py --model w600k_r50.onnx --algorithm components \
+       --similarity 0.51 --split tune --label x    # one scored run
+python scripts/diagnose_threshold.py --model w600k_r50.onnx   # where welding starts, no labels
+python scripts/inspect_pile.py --model w600k_r50.onnx --similarity 0.51 --contact-sheet
+python scripts/preflight.py --model w600k_r50.onnx --algorithm components --similarity 0.51
+python scripts/estimate_error_bar.py --model w600k_r50.onnx --similarity 0.51
+python scripts/per_person_report.py --model w600k_r50.onnx --similarity 0.51 --split holdout
+
+# Review UI (Phase 7).
+python scripts/build_review_index.py --model w600k_r50.onnx --similarity 0.51
+python scripts/review_faces.py                     # localhost:8766; --merge-floor to tune
+python scripts/tune_merge_threshold.py             # what similarity a suggestion should need
+python scripts/coverage_curve.py                   # THE OPEN QUESTION — not yet run
 
 ruff check . && ruff format --check . && mypy && pytest -q
 ```
@@ -182,6 +182,11 @@ Violating these silently corrupts results, so they are not stylistic preferences
 | `sklearn.cluster.HDBSCAN`, not standalone `hdbscan` | Avoids a fragile C-extension build |
 | Plain Pillow, never `pillow-simd` | Does not build on arm64; differing decoders change pixels |
 | EXIF tag 306 ranks *below* filename dates | It is a modification time; bulk edits rewrite it |
+| **ResNet50 + connected components @ cosine 0.51** | Measured against three models and four algorithms; PLAN.md decisions 39–41 |
+| **The clustering threshold is found per collection, never shipped as a constant** | One bad edge welds two people, and the risk scales with pair count. `diagnose_threshold.py` finds it without labels |
+| **Human decisions are keyed on face ids, never pile ids** | A pile id is meaningless after re-clustering; a face id comes from detection and is permanent. This is what lets a better model land without costing naming work |
+| **No tuning knob is ever exposed to a user** | A photo app cannot ask someone to set a cosine threshold. Flags like `--merge-floor` are development tools |
+| Agglomerative clustering is unusable here | Measured 6.1 GB at 63,878 faces on an 8 GB machine |
 
 ---
 
@@ -199,8 +204,56 @@ Violating these silently corrupts results, so they are not stylistic preferences
 
 ## 9. Prompt to start a session elsewhere
 
-> This is an offline face-clustering project for a personal photo library. Read `CONTEXT.md`,
-> then `PLAN.md` (plan of record, decision log, risk register) and `DEVLOG.md` (work log,
-> newest first) before proposing anything. Follow the rules in CONTEXT.md section 6 —
-> especially: never commit `data/` or `models/`, flag any quality compromise explicitly, and
-> measure before optimising. Tell me the current phase and the next concrete step.
+Paste this verbatim:
+
+> This is an offline face-clustering project for a personal photo library, running on my Linux
+> laptop. Read `CONTEXT.md` first, then `PLAN.md` (plan of record, decision log §6, risk
+> register) and `DEVLOG.md` (work log, newest entry first). `docs/theory.html` explains the
+> method and the measurements with diagrams — open it if you want the reasoning behind the
+> numbers.
+>
+> Phases 0–2 are complete and measured; the held-out score is BCubed F1 0.9394 with ResNet50 +
+> connected components at cosine 0.51, and the holdout is spent. The review UI (Phase 7) is
+> built to v3. One question is open and gates the rest: how many piles a person must name to
+> cover their library — `scripts/coverage_curve.py` answers it and has not been run.
+>
+> Follow CONTEXT.md §6 (rules) and §10 (how I work). In particular: **do not run `git commit`
+> or `git push`** — leave changes in the working tree and tell me what changed. Do not
+> relitigate anything in §7 without a measurement.
+>
+> Tell me the current state and the next concrete step.
+
+---
+
+## 10. How I work — agreements that are not negotiable
+
+These came from corrections during earlier sessions. They are written here so any machine and
+any session behaves the same way.
+
+1. **Never `git commit`, never `git push`.** Leave changes in the working tree and say plainly
+   which files changed. Siddharth decides when work travels between his two machines — a push
+   silently changes what he is running mid-experiment.
+2. **Every script prints its own verdict in plain English** — passed, failed, or in between —
+   next to what was expected. He should never have to paste a table back and be told what it
+   means. Exit codes match the verdict so a chained command stops on failure.
+3. **Every command handed over states three things**: why it is being run, what its output will
+   look like and roughly how long, and what result means "good, carry on" versus "stop and
+   report back". Prefer verification he can perform himself over reassurance.
+4. **Anything slower than a few seconds shows progress** — a bar with a count and an ETA where
+   work divides into units, or at minimum a live elapsed time and the stage currently running.
+5. **Compute time is free.** The machine is idle most of the day. Never recommend a cheaper
+   model, coarser setting or smaller sample *because it is faster*. "Four hours, run it
+   overnight" is a fine answer. Memory is a real constraint; the machine has 8 GB.
+6. **Judge designs by whether they work for any gallery**, not by what scores best on this
+   corpus. Prefer criteria that are relative over absolute constants. Say plainly when a number
+   was tuned on this library and should not ship as a default.
+7. **Say when a choice is arbitrary.** If two options differ by less than the noise, say so
+   rather than writing a justification. Where running both is cheap, do that instead of arguing.
+8. **Exhaust the data already in hand before writing another diagnostic.** Compare existing
+   runs against each other first — a slice that reverses between two splits is noise, one that
+   holds is a finding. Only then decide whether new code is warranted, and say whether it is
+   needed for the decision or merely nice to have.
+9. **Plain language.** No invented vocabulary, no dense metric-speak. Short sentences. If a
+   term is needed, define it once.
+10. **Test every code path before handing it over.** Blind string edits have silently failed
+    here more than once; a CLI flag that was never run is not shipped. See §6 rule 8.
