@@ -1,0 +1,722 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>From Pixels to People</title>
+
+<style>
+  :root {
+    --paper:#F5F5F7; --card:#FFFFFF; --ink:#17161C; --muted:#5E5C6B; --faint:#8C8A99;
+    --line:#DEDDE5; --accent:#3D3A8C; --good:#2F6B4F; --bad:#9E3B3B; --amber:#8A6220;
+    --accent-wash:#ECEBF6; --good-wash:#E7F0EA; --bad-wash:#F6E9E9; --amber-wash:#F7F0E2;
+    --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+    --serif:"Spectral",Georgia,"Times New Roman",serif;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:#121118; --card:#1A1922; --ink:#E8E7EE; --muted:#A09EAE; --faint:#7A7889;
+      --line:#2B2A36; --accent:#9E9AE8; --good:#74BC92; --bad:#DE8C8C; --amber:#D0A458;
+      --accent-wash:#1F1E33; --good-wash:#16251C; --bad-wash:#2A1A1A; --amber-wash:#2A2313;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:#121118; --card:#1A1922; --ink:#E8E7EE; --muted:#A09EAE; --faint:#7A7889;
+    --line:#2B2A36; --accent:#9E9AE8; --good:#74BC92; --bad:#DE8C8C; --amber:#D0A458;
+    --accent-wash:#1F1E33; --good-wash:#16251C; --bad-wash:#2A1A1A; --amber-wash:#2A2313;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font-family:var(--serif);
+         font-size:18px; line-height:1.7; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:780px; margin:0 auto; padding:64px 24px 120px; }
+  header { border-bottom:2px solid var(--ink); padding-bottom:36px; margin-bottom:8px; }
+  .eyebrow { font-family:var(--sans); font-size:12px; font-weight:600; letter-spacing:0.14em;
+             text-transform:uppercase; color:var(--accent); }
+  h1 { font-family:var(--sans); font-weight:700; font-size:clamp(38px,7vw,62px); line-height:1.02;
+       letter-spacing:-0.025em; margin:14px 0 0; text-wrap:balance; }
+  .standfirst { font-size:21px; color:var(--muted); margin:20px 0 0; max-width:60ch; }
+  section { padding:52px 0; border-bottom:1px solid var(--line); }
+  section:last-of-type { border-bottom:none; }
+  h2 { font-family:var(--sans); font-weight:600; font-size:28px; letter-spacing:-0.015em;
+       margin:0 0 6px; text-wrap:balance; }
+  h2 .num { font-family:var(--mono); font-size:15px; font-weight:400; color:var(--accent);
+            margin-right:12px; font-variant-numeric:tabular-nums; }
+  h3 { font-family:var(--sans); font-weight:600; font-size:17px; margin:34px 0 8px;
+       letter-spacing:-0.005em; }
+  p { margin:16px 0; max-width:65ch; }
+  strong { font-weight:600; }
+  a { color:var(--accent); }
+  .beat { font-family:var(--sans); font-size:11px; font-weight:600; letter-spacing:0.12em;
+          text-transform:uppercase; color:var(--faint); display:block; margin:30px 0 -8px; }
+  .math { font-family:var(--mono); font-size:15.5px; background:var(--card);
+          border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:3px;
+          padding:16px 20px; margin:18px 0; overflow-x:auto; line-height:1.75; }
+  .math .gloss { display:block; font-family:var(--serif); font-size:15px; color:var(--muted);
+                 margin-top:10px; padding-top:10px; border-top:1px dotted var(--line); }
+  code { font-family:var(--mono); font-size:0.88em; background:var(--accent-wash);
+         padding:1px 5px; border-radius:3px; }
+  .measured { background:var(--card); border:1px solid var(--line); border-radius:4px;
+              padding:18px 22px; margin:22px 0; }
+  .measured .beat { margin-top:0; }
+  .measured p { margin:8px 0 0; font-size:16.5px; }
+  .measured p:first-of-type { margin-top:6px; }
+  .correction { background:var(--amber-wash); border:1px solid var(--amber); border-radius:4px;
+                padding:18px 22px; margin:22px 0; }
+  .correction .beat { margin-top:0; color:var(--amber); }
+  .correction p { margin:8px 0 0; font-size:16.5px; }
+  .scroll { overflow-x:auto; margin:24px 0; }
+  table { border-collapse:collapse; width:100%; font-family:var(--sans); font-size:15px; }
+  th { text-align:left; font-weight:600; font-size:12px; letter-spacing:0.06em;
+       text-transform:uppercase; color:var(--faint); border-bottom:1.5px solid var(--ink);
+       padding:8px 14px 8px 0; white-space:nowrap; }
+  td { padding:9px 14px 9px 0; border-bottom:1px solid var(--line);
+       font-variant-numeric:tabular-nums; }
+  td.num, th.num { text-align:right; padding-right:0; }
+  tr.win td { background:var(--good-wash); font-weight:600; }
+  tr.lose td { color:var(--muted); }
+  .tag { font-family:var(--mono); font-size:12px; padding:1px 6px; border-radius:3px; }
+  .tag.good { background:var(--good-wash); color:var(--good); }
+  .tag.bad { background:var(--bad-wash); color:var(--bad); }
+  .tag.warn { background:var(--amber-wash); color:var(--amber); }
+  figure { margin:34px 0; }
+  figure svg { width:100%; height:auto; display:block; }
+  figcaption { font-family:var(--sans); font-size:14px; color:var(--muted); margin-top:12px;
+               padding-top:10px; border-top:1px solid var(--line); max-width:62ch; }
+  figcaption b { color:var(--ink); font-weight:600; }
+  .aside { border-left:3px solid var(--amber); background:var(--card); padding:16px 20px;
+           margin:26px 0; border-radius:0 3px 3px 0; }
+  .aside p { margin:6px 0; font-size:16.5px; }
+  .aside .beat { margin-top:0; color:var(--amber); }
+  ul { max-width:65ch; padding-left:22px; }
+  li { margin:9px 0; }
+  @media (max-width:620px) {
+    body { font-size:17px; } .wrap { padding:40px 18px 80px; } section { padding:40px 0; }
+    h2 { font-size:23px; } .standfirst { font-size:18px; }
+  }
+</style>
+
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">Offline face clustering · the theory</span>
+  <h1>From pixels to people</h1>
+  <p class="standfirst">
+    How a photograph becomes 512 numbers, why four ways of grouping those numbers behave so
+    differently, and what three rounds of measurement turned out to mean — including where
+    the first round was wrong.
+  </p>
+</header>
+
+<p style="font-family:var(--sans);font-size:13px;color:var(--faint);margin:18px 0 0">
+  A single self-contained file — no network needed, nothing to install. Kept in
+  <code>docs/theory.html</code> beside the code it describes; the decisions it cites are
+  logged in <code>PLAN.md</code> §6 and the runs in <code>DEVLOG.md</code>.
+</p>
+
+<!-- ============================================================ 1 -->
+<section>
+  <h2><span class="num">01</span>What the machine actually sees</h2>
+  <p>
+    Four stages in a line. Each takes the output of the last and throws away everything else —
+    by the time grouping happens, the photograph is long gone and only numbers remain.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 800 210" role="img" aria-label="Four-stage pipeline: photograph, detect, align, embed, group. Detection is the only irreversible stage.">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.4">
+        <rect x="8" y="40" width="128" height="76" rx="3"/><rect x="184" y="40" width="128" height="76" rx="3"/>
+        <rect x="360" y="40" width="128" height="76" rx="3"/><rect x="536" y="40" width="128" height="76" rx="3"/>
+        <rect x="700" y="40" width="92" height="76" rx="3"/>
+      </g>
+      <g font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600" fill="currentColor" text-anchor="middle">
+        <text x="72" y="70">Photograph</text><text x="248" y="70">Detect</text><text x="424" y="70">Align</text>
+        <text x="600" y="70">Embed</text><text x="746" y="70">Group</text>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" opacity="0.62" text-anchor="middle">
+        <text x="72" y="92">18,366 files</text><text x="248" y="92">63,878 faces</text>
+        <text x="424" y="92">112 × 112 px</text><text x="600" y="92">512 numbers</text><text x="746" y="92">piles</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.4" marker-end="url(#ar)">
+        <line x1="140" y1="78" x2="178" y2="78"/><line x1="316" y1="78" x2="354" y2="78"/>
+        <line x1="492" y1="78" x2="530" y2="78"/><line x1="668" y1="78" x2="696" y2="78"/>
+      </g>
+      <g stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.5">
+        <line x1="72" y1="120" x2="72" y2="152"/><line x1="424" y1="120" x2="424" y2="152"/>
+      </g>
+      <g font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.7">
+        <text x="8" y="168">needs the original file —</text><text x="8" y="183">runs once, 102 minutes</text>
+        <text x="360" y="168">everything after this reads</text><text x="360" y="183">the saved crops — cheap to redo</text>
+      </g>
+    </svg>
+    <figcaption>
+      The one-way door is after <b>Align</b>. A face missed by detection is gone for good, which
+      is why detection got the slow accurate model. Everything downstream reads saved crops and
+      can be re-run freely — and was, three times.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ============================================================ 2 -->
+<section>
+  <h2><span class="num">02</span>Turning a face into numbers</h2>
+
+  <span class="beat">What it means</span>
+  <p>
+    An <strong>embedding</strong> is 512 numbers describing a face — a coordinate, a single point
+    in a space with 512 axes. The model was trained so that <em>one person's photographs land
+    close together and different people land far apart</em>. Nothing in the numbers means "nose
+    width"; they are just a position, learned so that distance means identity.
+  </p>
+
+  <span class="beat">The maths</span>
+  <div class="math">
+    v̂ = v / ‖v‖  &nbsp;&nbsp;where&nbsp;&nbsp; ‖v‖ = √(v₁² + … + v₅₁₂²)
+    <span class="gloss">Every face is scaled onto a sphere of radius 1, so only <em>direction</em>
+    carries information — a brighter photograph no longer moves the point further out.</span>
+  </div>
+  <div class="math">
+    cos(θ) = â · b̂ = â₁b̂₁ + … + â₅₁₂b̂₅₁₂
+    <span class="gloss">The <b>cosine similarity</b>. <code>1.0</code> means identical direction,
+    <code>0</code> means unrelated. Every threshold in this project is one of these numbers.</span>
+  </div>
+  <div class="math">
+    ‖a − b‖² = 2 − 2·cos(θ)
+    <span class="gloss">On unit vectors, straight-line distance and cosine carry the same
+    information. That let the code use Euclidean library routines unchanged — and avoid a
+    64,000 × 64,000 matrix that would have needed 32 GB.</span>
+  </div>
+
+  <h3>Why the numbers cluster by person at all</h3>
+  <div class="math">
+    L = −log &nbsp; e<sup>s·cos(θ<sub>y</sub> + m)</sup> ⁄ ( e<sup>s·cos(θ<sub>y</sub> + m)</sup> + Σ<sub>j≠y</sub> e<sup>s·cos θ<sub>j</sub></sup> )
+    <span class="gloss">
+      <b>ArcFace</b>. An angular margin <em>m</em> is added to the correct answer's angle before
+      scoring, making the model's own job harder. Demanding the right answer anyway forces each
+      identity into a <b>tight cone</b> with empty space between cones. That empty space is what
+      makes clustering possible.
+    </span>
+  </div>
+
+  <div class="measured">
+    <span class="beat">Measured</span>
+    <p>Unrelated faces score <b>0.086</b> on average. Two photographs of one person typically
+    exceed <b>0.5</b>. That gap is the entire signal everything below works with.</p>
+  </div>
+</section>
+
+<!-- ============================================================ 3 -->
+<section>
+  <h2><span class="num">03</span>Three models — and a conclusion that reversed</h2>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Model</th><th class="num">Size</th><th>Design</th><th class="num">Embed time</th></tr></thead>
+      <tbody>
+        <tr><td>MobileFaceNet</td><td class="num">13.6 MB</td><td>depthwise-separable convolutions — built for phones</td><td class="num">12 min</td></tr>
+        <tr><td>ResNet50</td><td class="num">174 MB</td><td>50 layers, residual connections</td><td class="num">130 min</td></tr>
+        <tr><td>ResNet100 <em>(antelopev2)</em></td><td class="num">~250 MB</td><td>100 layers, a different training package</td><td class="num">~4 h</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="correction">
+    <span class="beat">Correction — an earlier version of this page was wrong</span>
+    <p>
+      It said <em>"the algorithm mattered; the model didn't."</em> That was measured with
+      Chinese Whispers, which turned out to be the <b>losing</b> algorithm. Under the winning
+      one the models separate clearly.
+    </p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 700 250" role="img" aria-label="Under Chinese Whispers the two models score almost identically, 0.850 versus 0.845. Under connected components ResNet50 scores 0.961 against MobileFaceNet 0.887.">
+      <g font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600" fill="currentColor">
+        <text x="10" y="22">measured with Chinese Whispers — looks like a tie</text>
+        <text x="10" y="140">measured with connected components — not a tie</text>
+      </g>
+      <!-- scale: x 150..660 maps F1 0.80..1.00 -->
+      <g stroke="currentColor" opacity="0.2" stroke-width="1">
+        <line x1="150" y1="36" x2="150" y2="118"/><line x1="150" y1="154" x2="150" y2="236"/>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" opacity="0.55">
+        <text x="142" y="132" text-anchor="middle">0.80</text><text x="660" y="132" text-anchor="middle">1.00</text>
+      </g>
+      <!-- CW bars: mbf .8499 -> 150+ (0.0499/0.2)*510 = 277 ; r50 .8447 -> 264 -->
+      <rect x="150" y="44" width="127" height="24" fill="var(--accent)" opacity="0.8"/>
+      <rect x="150" y="76" width="114" height="24" fill="var(--muted)" opacity="0.7"/>
+      <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+        <text x="10" y="61">MobileFaceNet</text><text x="10" y="93">ResNet50</text>
+        <text x="287" y="61" font-family="IBM Plex Mono, monospace">0.8499</text>
+        <text x="274" y="93" font-family="IBM Plex Mono, monospace">0.8447</text>
+      </g>
+      <!-- components bars: mbf .8871 -> 150+ (0.0871/0.2)*510 = 372 ; r50 .9606 -> 150+410=560 -->
+      <rect x="150" y="162" width="222" height="24" fill="var(--muted)" opacity="0.7"/>
+      <rect x="150" y="194" width="410" height="24" fill="var(--good)" opacity="0.9"/>
+      <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" fill="currentColor">
+        <text x="10" y="179">MobileFaceNet</text><text x="10" y="211">ResNet50</text>
+        <text x="382" y="179" font-family="IBM Plex Mono, monospace">0.8871</text>
+        <text x="570" y="211" font-family="IBM Plex Mono, monospace" fill="var(--good)" font-weight="600">0.9606</text>
+      </g>
+    </svg>
+    <figcaption>
+      Same two models, same faces, same gold set. Under the weaker algorithm they differ by
+      <b>0.005</b>; under the stronger one by <b>0.074</b>. A comparison is only as informative
+      as the setting it is run in — which is why the first conclusion had to be withdrawn.
+    </figcaption>
+  </figure>
+
+  <div class="measured">
+    <span class="beat">Measured — and the biggest model still lost</span>
+    <p>
+      ResNet100 reached <b>0.9471</b> at best, against ResNet50's <b>0.9606</b>. It is also
+      twice the size and roughly twice the runtime, and it collapses faster when its setting is
+      loosened. It comes from a different package (antelopev2) than the detector, so the face
+      alignment it expects may not match the crops it is fed — a plausible cause, not a
+      demonstrated one.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ 4 -->
+<section>
+  <h2><span class="num">04</span>Four ways to make piles</h2>
+  <p>
+    All four receive the same input — 63,878 points on a sphere — and differ entirely in
+    <em>what question they ask</em> of that geometry.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 800 300" role="img" aria-label="The same twelve points grouped four ways: HDBSCAN discards sparse points, loose components merges everything, strict components recovers two groups, Chinese Whispers reaches two groups by voting.">
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="1" opacity="0.28">
+        <rect x="4" y="28" width="190" height="200" rx="3"/><rect x="204" y="28" width="190" height="200" rx="3"/>
+        <rect x="404" y="28" width="190" height="200" rx="3"/><rect x="604" y="28" width="190" height="200" rx="3"/>
+      </g>
+      <g font-family="IBM Plex Sans, sans-serif" font-size="12.5" font-weight="600" fill="currentColor" text-anchor="middle">
+        <text x="99" y="20">HDBSCAN</text><text x="299" y="20">components @ 0.30</text>
+        <text x="499" y="20">components @ 0.60</text><text x="699" y="20">Chinese Whispers</text>
+      </g>
+      <g>
+        <ellipse cx="52" cy="90" rx="30" ry="24" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
+        <ellipse cx="146" cy="170" rx="30" ry="24" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
+        <g fill="var(--accent)"><circle cx="40" cy="84" r="5"/><circle cx="60" cy="82" r="5"/><circle cx="52" cy="102" r="5"/>
+          <circle cx="136" cy="164" r="5"/><circle cx="156" cy="162" r="5"/><circle cx="146" cy="182" r="5"/></g>
+        <g fill="none" stroke="var(--bad)" stroke-width="1.6"><circle cx="92" cy="70" r="5"/><circle cx="118" cy="104" r="5"/>
+          <circle cx="76" cy="140" r="5"/><circle cx="104" cy="196" r="5"/><circle cx="164" cy="112" r="5"/><circle cx="40" cy="176" r="5"/></g>
+        <text x="99" y="248" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--bad)" text-anchor="middle">6 of 12 discarded</text>
+        <text x="99" y="264" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.7" text-anchor="middle">“is this region dense?”</text>
+      </g>
+      <g>
+        <path d="M 232 74 Q 300 46 368 80 Q 386 140 344 196 Q 284 214 236 186 Q 214 130 232 74 Z"
+              fill="var(--bad-wash)" stroke="var(--bad)" stroke-width="1.4"/>
+        <g stroke="var(--bad)" stroke-width="1" opacity="0.65">
+          <line x1="252" y1="84" x2="272" y2="82"/><line x1="272" y1="82" x2="264" y2="102"/>
+          <line x1="264" y1="102" x2="290" y2="120"/><line x1="290" y1="120" x2="316" y2="104"/>
+          <line x1="316" y1="104" x2="336" y2="164"/><line x1="336" y1="164" x2="356" y2="162"/>
+          <line x1="356" y1="162" x2="346" y2="182"/><line x1="290" y1="120" x2="276" y2="140"/>
+          <line x1="276" y1="140" x2="304" y2="196"/><line x1="290" y1="120" x2="304" y2="70"/>
+          <line x1="316" y1="104" x2="364" y2="112"/><line x1="264" y1="102" x2="240" y2="176"/></g>
+        <g fill="var(--bad)"><circle cx="252" cy="84" r="5"/><circle cx="272" cy="82" r="5"/><circle cx="264" cy="102" r="5"/>
+          <circle cx="336" cy="164" r="5"/><circle cx="356" cy="162" r="5"/><circle cx="346" cy="182" r="5"/>
+          <circle cx="304" cy="70" r="5"/><circle cx="290" cy="120" r="5"/><circle cx="276" cy="140" r="5"/>
+          <circle cx="304" cy="196" r="5"/><circle cx="364" cy="112" r="5"/><circle cx="240" cy="176" r="5"/></g>
+        <text x="299" y="248" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--bad)" text-anchor="middle">1 pile — chained</text>
+        <text x="299" y="264" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.7" text-anchor="middle">“who is reachable?”</text>
+      </g>
+      <g>
+        <ellipse cx="470" cy="96" rx="44" ry="38" fill="var(--good-wash)" stroke="var(--good)" stroke-width="1.5"/>
+        <ellipse cx="540" cy="172" rx="42" ry="36" fill="var(--good-wash)" stroke="var(--good)" stroke-width="1.5"/>
+        <g stroke="var(--good)" stroke-width="1.1">
+          <line x1="452" y1="84" x2="472" y2="82"/><line x1="472" y1="82" x2="464" y2="102"/>
+          <line x1="464" y1="102" x2="490" y2="120"/><line x1="472" y1="82" x2="504" y2="70"/>
+          <line x1="536" y1="164" x2="556" y2="162"/><line x1="556" y1="162" x2="546" y2="182"/>
+          <line x1="536" y1="164" x2="516" y2="196"/><line x1="556" y1="162" x2="564" y2="146"/></g>
+        <g fill="var(--good)"><circle cx="452" cy="84" r="5"/><circle cx="472" cy="82" r="5"/><circle cx="464" cy="102" r="5"/>
+          <circle cx="504" cy="70" r="5"/><circle cx="490" cy="120" r="5"/><circle cx="536" cy="164" r="5"/>
+          <circle cx="556" cy="162" r="5"/><circle cx="546" cy="182" r="5"/><circle cx="516" cy="196" r="5"/><circle cx="564" cy="146" r="5"/></g>
+        <g fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.5"><circle cx="440" cy="150" r="5"/><circle cx="578" cy="100" r="5"/></g>
+        <text x="499" y="248" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--good)" text-anchor="middle">2 piles — correct</text>
+        <text x="499" y="264" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.7" text-anchor="middle">same rule, stricter cut</text>
+      </g>
+      <g>
+        <ellipse cx="670" cy="96" rx="44" ry="38" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <ellipse cx="740" cy="172" rx="42" ry="36" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.5"/>
+        <g fill="var(--accent)"><circle cx="652" cy="84" r="5"/><circle cx="672" cy="82" r="5"/><circle cx="664" cy="102" r="5"/>
+          <circle cx="704" cy="70" r="5"/><circle cx="690" cy="120" r="5"/><circle cx="736" cy="164" r="5"/>
+          <circle cx="756" cy="162" r="5"/><circle cx="746" cy="182" r="5"/><circle cx="716" cy="196" r="5"/><circle cx="764" cy="146" r="5"/></g>
+        <g stroke="var(--accent)" stroke-width="1.6" marker-end="url(#ar2)" opacity="0.85">
+          <line x1="676" y1="90" x2="686" y2="112"/><line x1="700" y1="78" x2="690" y2="112"/><line x1="742" y1="172" x2="722" y2="190"/></g>
+        <g fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.5"><circle cx="640" cy="150" r="5"/><circle cx="778" cy="100" r="5"/></g>
+        <text x="699" y="248" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--accent)" text-anchor="middle">2 piles — by vote</text>
+        <text x="699" y="264" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.7" text-anchor="middle">“what do my neighbours say?”</text>
+      </g>
+      <g font-family="IBM Plex Sans, sans-serif" font-size="11" fill="currentColor" opacity="0.62">
+        <text x="4" y="292">hollow circles = left ungrouped</text></g>
+    </svg>
+    <figcaption>
+      The same twelve points, four decisions. <b>The only difference between panels two and
+      three is the threshold</b> — identical algorithm, one merging everything and the other
+      recovering both groups.
+    </figcaption>
+  </figure>
+
+  <div class="math">
+    d<sub>mreach</sub>(a, b) = max( core<sub>k</sub>(a), core<sub>k</sub>(b), d(a, b) )
+    <span class="gloss"><b>HDBSCAN.</b> core<sub>k</sub>(a) is how far <em>a</em> sits from its
+    k-th neighbour — how lonely it is. Lonely points are pushed away from everything, so a person
+    with two photographs can never form a cluster at any setting.</span>
+  </div>
+  <div class="math">
+    group(a) = { b : a path a → … → b exists, every edge with cos ≥ t }
+    <span class="gloss"><b>Connected components.</b> Membership is transitive — A links B, B links
+    C, all three land together. One pass over a graph, entirely governed by <em>t</em>.</span>
+  </div>
+  <div class="math">
+    label(v) ← argmax<sub>ℓ</sub> &nbsp; Σ<sub>u ∈ N(v), label(u) = ℓ</sub> w(u, v)
+    <span class="gloss"><b>Chinese Whispers.</b> Each face adopts whichever label carries the most
+    weight among its neighbours. One weak edge cannot drag a group across — it has to outvote
+    everything else.</span>
+  </div>
+  <p>
+    <strong>Agglomerative</strong> repeatedly merges the two nearest groups. More principled, and
+    it must track distances between every pair of live groups.
+  </p>
+
+  <div class="measured">
+    <span class="beat">Measured</span>
+    <p>Agglomerative needed <b>6.1 GB</b> at 63,878 faces and killed an 8 GB machine. Memory sat
+    near 40% through the graph phase, then spiked in one burst too fast for swap to absorb.</p>
+  </div>
+</section>
+
+<!-- ============================================================ 5 -->
+<section>
+  <h2><span class="num">05</span>Chaining: fatal at 0.30, essential at 0.60</h2>
+  <p>
+    Transitivity is the same mechanism whether it helps or destroys. Only the threshold decides
+    which.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 250" role="img" aria-label="Three faces in a line. At a loose threshold every adjacent pair links so all three merge though the ends are dissimilar. At a strict threshold the weak links are cut.">
+      <g>
+        <text x="20" y="34" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600" fill="var(--bad)">threshold 0.30 — weak links survive</text>
+        <g fill="var(--bad)"><circle cx="90" cy="86" r="15"/><circle cx="270" cy="86" r="15"/><circle cx="450" cy="86" r="15"/></g>
+        <g stroke="var(--bad)" stroke-width="2"><line x1="105" y1="86" x2="255" y2="86"/><line x1="285" y1="86" x2="435" y2="86"/></g>
+        <path d="M 90 110 Q 270 146 450 110" fill="none" stroke="var(--bad)" stroke-width="1.4" stroke-dasharray="5 4"/>
+        <g font-family="IBM Plex Mono, monospace" font-size="11.5" fill="currentColor" text-anchor="middle">
+          <text x="180" y="78">0.38</text><text x="360" y="78">0.36</text>
+          <text x="270" y="162" fill="var(--bad)">0.09 — never compared</text></g>
+        <g font-family="IBM Plex Sans, sans-serif" font-size="12" fill="#fff" text-anchor="middle" font-weight="600">
+          <text x="90" y="91">A</text><text x="270" y="91">B</text><text x="450" y="91">C</text></g>
+        <rect x="520" y="70" width="160" height="34" rx="3" fill="var(--bad-wash)" stroke="var(--bad)" stroke-width="1.2"/>
+        <text x="600" y="92" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--bad)" text-anchor="middle">one pile of three</text>
+      </g>
+      <line x1="20" y1="180" x2="680" y2="180" stroke="currentColor" stroke-width="1" opacity="0.2"/>
+      <g>
+        <text x="20" y="208" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600" fill="var(--good)">threshold 0.60 — weak links cut</text>
+        <g fill="var(--good)"><circle cx="90" cy="238" r="12"/><circle cx="270" cy="238" r="12"/><circle cx="450" cy="238" r="12"/></g>
+        <g stroke="var(--good)" stroke-width="2" stroke-dasharray="3 5" opacity="0.45">
+          <line x1="102" y1="238" x2="258" y2="238"/><line x1="282" y1="238" x2="438" y2="238"/></g>
+        <rect x="520" y="222" width="160" height="32" rx="3" fill="var(--good-wash)" stroke="var(--good)" stroke-width="1.2"/>
+        <text x="600" y="243" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--good)" text-anchor="middle">three separate</text>
+      </g>
+    </svg>
+    <figcaption>
+      A and C score 0.09 — plainly different people — yet at a loose threshold they share a pile
+      because B stands between them. <b>Nothing ever compares A to C directly.</b>
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ============================================================ 6 -->
+<section>
+  <h2><span class="num">06</span>How the scoring works</h2>
+  <p>
+    <strong>Precision</strong>: when it puts two faces together, is it right? <strong>Recall</strong>:
+    did it find all of someone's photographs? Merging two people hurts precision; splitting one
+    person hurts recall.
+  </p>
+  <div class="math">
+    P<sub>B³</sub> = (1/N) Σ<sub>i</sub> |C(i) ∩ L(i)| / |C(i)| &nbsp;·&nbsp;
+    R<sub>B³</sub> = (1/N) Σ<sub>i</sub> |C(i) ∩ L(i)| / |L(i)| &nbsp;·&nbsp; F1 = 2PR/(P+R)
+    <span class="gloss">Counted per <em>face</em>. C(i) is the pile face <em>i</em> landed in, L(i)
+    everyone who truly shares its identity. The harmonic mean stays low unless both are high.</span>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 700 220" role="img" aria-label="A person with fifty photographs contributes 1,225 pairs while one with four contributes six, so pairwise scoring makes the small person invisible.">
+      <g font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="600" fill="currentColor">
+        <text x="16" y="24">a much-photographed person — 50 faces</text>
+        <text x="16" y="128">a rarely-photographed one — 4 faces</text></g>
+      <g fill="var(--accent)">
+        <circle cx="26" cy="46" r="4"/><circle cx="44" cy="46" r="4"/><circle cx="62" cy="46" r="4"/><circle cx="80" cy="46" r="4"/>
+        <circle cx="98" cy="46" r="4"/><circle cx="116" cy="46" r="4"/><circle cx="134" cy="46" r="4"/><circle cx="152" cy="46" r="4"/>
+        <circle cx="170" cy="46" r="4"/><circle cx="188" cy="46" r="4"/><circle cx="206" cy="46" r="4"/><circle cx="224" cy="46" r="4"/>
+        <circle cx="26" cy="62" r="4"/><circle cx="44" cy="62" r="4"/><circle cx="62" cy="62" r="4"/><circle cx="80" cy="62" r="4"/>
+        <circle cx="98" cy="62" r="4"/><circle cx="116" cy="62" r="4"/><circle cx="134" cy="62" r="4"/><circle cx="152" cy="62" r="4"/>
+        <circle cx="170" cy="62" r="4"/><circle cx="188" cy="62" r="4"/><circle cx="206" cy="62" r="4"/><circle cx="224" cy="62" r="4"/>
+        <circle cx="26" cy="78" r="4"/><circle cx="44" cy="78" r="4"/></g>
+      <text x="246" y="66" font-family="IBM Plex Mono, monospace" font-size="13" fill="var(--accent)">→ 1,225 pairs</text>
+      <g fill="var(--bad)"><circle cx="26" cy="150" r="4"/><circle cx="44" cy="150" r="4"/><circle cx="62" cy="150" r="4"/><circle cx="80" cy="150" r="4"/></g>
+      <text x="246" y="155" font-family="IBM Plex Mono, monospace" font-size="13" fill="var(--bad)">→ 6 pairs</text>
+      <rect x="400" y="36" width="280" height="24" fill="var(--accent)" opacity="0.85"/>
+      <rect x="400" y="36" width="1.4" height="24" fill="var(--bad)"/>
+      <text x="400" y="78" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="currentColor" opacity="0.8">pairwise weighting — the small person is the hairline</text>
+      <rect x="400" y="140" width="259" height="24" fill="var(--accent)" opacity="0.85"/>
+      <rect x="659" y="140" width="21" height="24" fill="var(--bad)"/>
+      <text x="400" y="182" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="currentColor" opacity="0.8">BCubed weighting — every face counts once</text>
+    </svg>
+    <figcaption>
+      Completely failing the small person costs pairwise recall 6 pairs out of 1,231 — a score of
+      <b>99.5%</b> while one of two people is entirely broken. BCubed reports <b>94.4%</b>. That
+      is why BCubed is the headline.
+    </figcaption>
+  </figure>
+
+  <div class="math">
+    ARI = ( RI − E[RI] ) / ( max RI − E[RI] )
+    <span class="gloss">The Rand Index minus <b>what random guessing would have scored</b>. When
+    F1 and ARI disagree sharply, trust ARI.</span>
+  </div>
+</section>
+
+<!-- ============================================================ 7 -->
+<section>
+  <h2><span class="num">07</span>Every configuration, scored</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Configuration</th><th class="num">P</th><th class="num">R</th>
+        <th class="num">BCubed F1</th><th class="num">ARI</th><th class="num">piles</th></tr></thead>
+      <tbody>
+        <tr class="lose"><td>HDBSCAN untuned <em>(baseline)</em>, mbf</td><td class="num">0.998</td><td class="num">0.314</td><td class="num">0.4776</td><td class="num">0.067</td><td class="num">406</td></tr>
+        <tr class="lose"><td>Chinese Whispers @ 0.35, mbf</td><td class="num">0.968</td><td class="num">0.757</td><td class="num">0.8499</td><td class="num">0.676</td><td class="num">122</td></tr>
+        <tr class="lose"><td>Components @ 0.60, mbf</td><td class="num">0.996</td><td class="num">0.800</td><td class="num">0.8871</td><td class="num">0.873</td><td class="num">125</td></tr>
+        <tr><td>HDBSCAN tuned @ eps 0.95, mbf</td><td class="num">0.994</td><td class="num">0.872</td><td class="num">0.9288</td><td class="num">0.894</td><td class="num">118</td></tr>
+        <tr><td>Components @ 0.60, ResNet100</td><td class="num">0.988</td><td class="num">0.897</td><td class="num">0.9403</td><td class="num">0.931</td><td class="num">110</td></tr>
+        <tr><td>HDBSCAN @ eps 0.90, ResNet100</td><td class="num">0.988</td><td class="num">0.909</td><td class="num">0.9471</td><td class="num">0.928</td><td class="num">108</td></tr>
+        <tr><td>HDBSCAN @ eps 0.95, ResNet50</td><td class="num">0.994</td><td class="num">0.914</td><td class="num">0.9521</td><td class="num">0.933</td><td class="num">112</td></tr>
+        <tr class="win"><td>Components @ 0.51, ResNet50</td><td class="num">0.992</td><td class="num">0.931</td><td class="num">0.9606</td><td class="num">0.955</td><td class="num">107</td></tr>
+        <tr class="lose"><td>Agglomerative, any model</td><td class="num" colspan="5">needs 6.1 GB — killed the machine</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="correction">
+    <span class="beat">Two more corrections to the first version of this page</span>
+    <p>
+      It called HDBSCAN <em>structurally wrong for this problem</em>. Tuned, it reaches
+      <b>0.9521</b> — second place, not last. Its 0.478 was an untuned figure being compared
+      against tuned rivals.
+    </p>
+    <p>
+      It also said recall <b>0.800</b> showed the ceiling was the method rather than the
+      photographs. True, but the ceiling was further off than it looked: recall reached
+      <b>0.931</b>.
+    </p>
+  </div>
+
+  <h3>What survives</h3>
+  <ul>
+    <li><strong>Algorithm choice is worth more than model choice</strong> — 0.478 → 0.961 against 0.887 → 0.961 — but both matter, and the first version wrongly dismissed the second.</li>
+    <li><strong>The simplest method still won.</strong> Connected components is one pass over a graph, and it beats density clustering and label propagation — <em>above</em> its cliff, and it is the worst of all of them below.</li>
+    <li><strong>Bigger is not better.</strong> ResNet100 is twice ResNet50's size and lost by 0.014.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ 8 -->
+<section>
+  <h2><span class="num">08</span>Picking the threshold without labels</h2>
+  <p>
+    The gold set holds 1,499 faces. The library holds 63,878. A threshold tuned on the first
+    can be wrong on the second, because connected components needs only <em>one</em> bad edge to
+    weld two people, and the chances of that edge grow with the number of pairs, not faces.
+  </p>
+  <p>
+    Welding needs no labels to detect: it shows up as a pile that suddenly doubles.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 260" role="img" aria-label="Biggest pile size against threshold on the full library. Flat near 5,000 faces from 0.65 down to 0.51, then leaping to 10,851 at 0.49, 25,607 at 0.47 and 36,415 at 0.45.">
+      <g stroke="currentColor" opacity="0.25" stroke-width="1">
+        <line x1="60" y1="220" x2="670" y2="220"/><line x1="60" y1="30" x2="60" y2="220"/>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="10.5" fill="currentColor" opacity="0.6">
+        <text x="6" y="60">36,000</text><text x="6" y="150">12,000</text><text x="6" y="224">0</text>
+        <text x="60" y="238" text-anchor="middle">0.45</text><text x="240" y="238" text-anchor="middle">0.51</text>
+        <text x="420" y="238" text-anchor="middle">0.57</text><text x="660" y="238" text-anchor="middle">0.65</text>
+      </g>
+      <path d="M 60 56 L 120 105 L 180 171 L 240 195 L 300 196 L 360 196 L 450 196 L 510 196 L 660 197"
+            fill="none" stroke="var(--accent)" stroke-width="2.4"/>
+      <g fill="var(--accent)">
+        <circle cx="300" cy="196" r="4"/><circle cx="360" cy="196" r="4"/><circle cx="450" cy="196" r="4"/>
+        <circle cx="510" cy="196" r="4"/><circle cx="660" cy="197" r="4"/>
+      </g>
+      <circle cx="240" cy="195" r="6" fill="var(--good)"/>
+      <g fill="var(--bad)"><circle cx="180" cy="171" r="5"/><circle cx="120" cy="105" r="5"/><circle cx="60" cy="56" r="5"/></g>
+      <rect x="60" y="30" width="120" height="190" fill="var(--bad)" opacity="0.07"/>
+      <g font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="currentColor">
+        <text x="66" y="46" fill="var(--bad)" font-weight="600">welded — people fused</text>
+        <text x="260" y="186" fill="var(--good)" font-weight="600">0.51 — chosen</text>
+        <text x="392" y="182" opacity="0.7">flat: one real person, ~5,100 faces</text>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--bad)">
+        <text x="126" y="98">25,607</text><text x="186" y="164">10,851</text>
+      </g>
+    </svg>
+    <figcaption>
+      Biggest pile against threshold, over all 63,657 faces with the reserved identities held
+      out. Flat at about 5,100 from 0.65 all the way down to 0.51 — that pile is <b>one real
+      person</b>, verified by eye and by 249 labelled faces all bearing the same identity. At
+      0.49 a <em>different</em> pile appears: 10,851 faces with a median eye distance of 22 px
+      against the clean pile's 72, welding fifteen people. Unreadable faces collapsing together,
+      exactly as feared — just two notches lower than expected.
+    </figcaption>
+  </figure>
+
+  <div class="measured">
+    <span class="beat">Measured, with no labels involved</span>
+    <p>
+      The welding point is <b>0.49</b>, and <b>0.51</b> is the loosest safe setting — which is
+      also the best-scoring one on the gold set. Two independent methods, the same answer.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ 9 -->
+<section>
+  <h2><span class="num">09</span>The one measurement that counts</h2>
+  <p>
+    Every number so far came from identities used to choose the settings. Twenty-four people
+    were reserved from the start and never consulted. They were scored once.
+  </p>
+  <p>
+    Before opening them, the tolerance was fixed by asking how much a 24-person score wobbles
+    by luck alone: 2,000 random 24-person draws from the tuning half.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 170" role="img" aria-label="Bands fixed in advance: below 0.930 a real failure, 0.930 to 0.949 weak, above 0.949 normal. The held-out result 0.9394 lands in the middle band.">
+      <!-- scale 0.90 .. 0.98 over x 60..660 -->
+      <rect x="60"  y="60" width="225" height="34" fill="var(--bad)"   opacity="0.18"/>
+      <rect x="285" y="60" width="143" height="34" fill="var(--amber)" opacity="0.22"/>
+      <rect x="428" y="60" width="232" height="34" fill="var(--good)"  opacity="0.20"/>
+      <g stroke="currentColor" opacity="0.3"><line x1="60" y1="94" x2="660" y2="94"/></g>
+      <g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor" opacity="0.65">
+        <text x="285" y="112" text-anchor="middle">0.930</text>
+        <text x="428" y="112" text-anchor="middle">0.949</text>
+        <text x="660" y="112" text-anchor="middle">0.9606 dev</text>
+      </g>
+      <g font-family="IBM Plex Sans, sans-serif" font-size="12" font-weight="600">
+        <text x="70"  y="82" fill="var(--bad)">real failure</text>
+        <text x="296" y="82" fill="var(--amber)">weak but possible</text>
+        <text x="440" y="82" fill="var(--good)">normal — small-sample wobble</text>
+      </g>
+      <line x1="353" y1="40" x2="353" y2="100" stroke="var(--ink)" stroke-width="2.5"/>
+      <circle cx="353" cy="40" r="6" fill="var(--ink)"/>
+      <text x="353" y="28" font-family="IBM Plex Sans, sans-serif" font-size="13" font-weight="700"
+            fill="var(--ink)" text-anchor="middle">0.9394 — held out</text>
+      <text x="60" y="150" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="currentColor" opacity="0.7">
+        bands fixed before the test was run, from 2,000 random 24-person draws of the tuning half</text>
+    </svg>
+    <figcaption>
+      <b>BCubed F1 0.9394 on 24 people the system had never seen</b>, against 0.9606 on the half
+      it was tuned on. Precision 0.976, recall 0.906, 27 piles for 24 people. It lands in the
+      middle band: slightly unlucky, not a failure — and the whole 0.021 gap traces to one bucket
+      of 51 faces, about two or three individual people.
+    </figcaption>
+  </figure>
+
+  <div class="measured">
+    <span class="beat">Which errors remain</span>
+    <p>
+      Consistent across <em>both</em> halves, so real: bad-quality faces <b>0.515</b>, tiny faces
+      <b>0.89</b>, marginal quality <b>0.91</b>, profile <b>0.89</b>, middle era <b>0.90</b>.
+      Every one is about the face being hard to read, not about the method.
+    </p>
+    <p>
+      Slices that <em>reverse</em> between the halves — photos-per-person, beauty-filtered — are
+      noise on 221 faces and were read as findings once before they were checked.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ 10 -->
+<section>
+  <h2><span class="num">10</span>Where the human comes in</h2>
+  <p>
+    Precision 0.976, recall 0.906. The machine mixes people rarely and splits them sometimes,
+    so the human's job is mostly <em>joining</em>, not separating.
+  </p>
+  <p>
+    The design rule that follows: a clustering is disposable, a human decision is not. So
+    decisions are recorded against <strong>face</strong> identifiers, which come from detection
+    and never change — never against pile numbers, which are renumbered by every re-run.
+  </p>
+
+  <figure>
+    <svg viewBox="0 0 700 230" role="img" aria-label="Two layers. The clustering layer is replaced whenever the model changes; the decision layer is keyed on permanent face ids and survives.">
+      <rect x="30" y="24" width="300" height="76" rx="4" fill="var(--card)" stroke="var(--line)" stroke-width="1.4"/>
+      <rect x="370" y="24" width="300" height="76" rx="4" fill="var(--card)" stroke="var(--line)" stroke-width="1.4"
+            stroke-dasharray="5 4"/>
+      <rect x="30" y="134" width="640" height="72" rx="4" fill="var(--good-wash)" stroke="var(--good)" stroke-width="1.6"/>
+      <g font-family="IBM Plex Sans, sans-serif" font-weight="600" font-size="13.5" fill="currentColor">
+        <text x="46" y="50">Clustering today — ResNet50 @ 0.51</text>
+        <text x="386" y="50">Clustering tomorrow — a better model</text>
+        <text x="46" y="160" fill="var(--good)">Decisions — kept</text>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="11.5" fill="currentColor" opacity="0.72">
+        <text x="46" y="72">pile 41 = {14203, 14208, …}</text>
+        <text x="46" y="90">pile 7  = {  902,   915, …}</text>
+        <text x="386" y="72">pile 3  = {14203, 14208, 902, …}</text>
+        <text x="386" y="90">every number reshuffled</text>
+      </g>
+      <g font-family="IBM Plex Mono, monospace" font-size="11.5" fill="var(--good)">
+        <text x="46" y="182">face 14203 → "Rahul"      face 902 → not a person</text>
+        <text x="46" y="199">face 14208 → "Rahul"      face 915 → not Rahul</text>
+      </g>
+      <g stroke="var(--bad)" stroke-width="2"><line x1="340" y1="62" x2="362" y2="62"/></g>
+      <text x="351" y="52" font-family="IBM Plex Sans, sans-serif" font-size="16" fill="var(--bad)" text-anchor="middle">→</text>
+      <text x="351" y="122" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="var(--bad)" text-anchor="middle">thrown away</text>
+      <g stroke="var(--good)" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.8">
+        <line x1="120" y1="100" x2="120" y2="134"/><line x1="500" y1="100" x2="500" y2="134"/>
+      </g>
+    </svg>
+    <figcaption>
+      Swap the model and every pile number changes — but face 14203 is still face 14203, so
+      "Rahul" survives. This is what makes it safe to re-run the clustering after an hour of
+      naming, and it is the reason the review tool never edits a cluster.
+    </figcaption>
+  </figure>
+
+  <h3>What the measurements say about the human's workload</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Question</th><th>Answer</th><th>How it was settled</th></tr></thead>
+      <tbody>
+        <tr><td>Are the top-ranked piles real people?</td><td><span class="tag good">yes</span> first 200 checked by eye</td><td>a read-only screen, built before any editing</td></tr>
+        <tr><td>Does the machine split people often?</td><td><span class="tag good">no</span> ~10 of 106 piles</td><td>gold labels across pile pairs</td></tr>
+        <tr><td>Are merge suggestions worth the interruption?</td><td><span class="tag warn">barely</span> 2 questions per merge at best</td><td>same labels, precision by threshold</td></tr>
+        <tr><td>How many piles must be named for good coverage?</td><td><span class="tag bad">unmeasured</span></td><td>the last open question</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="aside">
+    <span class="beat">The question that decides whether this is a product</span>
+    <p>
+      Naming eight thousand piles is not something anyone will do. Whether that is what this
+      asks depends entirely on how lopsided the piles are — and pile sizes look very lopsided
+      indeed, with 106 of them holding 26,358 faces. If a few hundred names cover most of a
+      library, the design holds. If not, the clustering has to join more per pile, or poor
+      faces have to be kept out of the queue altogether.
+    </p>
+    <p>
+      That number is not yet measured, which makes it the most important thing still unknown —
+      more important than any threshold on this page.
+    </p>
+  </div>
+</section>
+
+</div>
+</body></html>

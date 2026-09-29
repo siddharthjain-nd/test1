@@ -24,6 +24,16 @@ new group.
 - Not for surveillance, access control, authentication, or identifying strangers.
 - Not commercially usable — see Licensing below.
 
+## How it works
+
+[`docs/theory.html`](docs/theory.html) explains the whole thing: how a photograph becomes 512
+numbers, why four ways of grouping those numbers behave so differently, what every measurement
+turned out to mean, and which earlier conclusions later measurement overturned. Open it in any
+browser — one self-contained file, no network, nothing to install.
+
+The decisions it cites are logged in [`PLAN.md`](PLAN.md) §6 and the runs in
+[`DEVLOG.md`](DEVLOG.md).
+
 ---
 
 ## Licensing — read before use

@@ -194,42 +194,60 @@ def main() -> int:
                 f"{n_offered - right:,}",
             )
         console.print(table)
-        at_best = values >= best[0]
-        recommended[name] = (
-            best[0],
-            float((at_best & is_same).sum()) / max(int(at_best.sum()), 1),
-            int(at_best.sum()),
-            int((at_best & is_same).sum()),
-        )
+
+        # Cheapest row that still finds something: fewest questions answered per merge
+        # gained. Percentages mislead here -- two questions for one merge beats forty-one
+        # for five, even though the percentage is similar.
+        cheapest: tuple[float, float, int, int] | None = None
+        for cut in BANDS:
+            offered = values >= cut
+            n_offered = int(offered.sum())
+            right = int((offered & is_same).sum())
+            if right == 0:
+                continue
+            cost = n_offered / right
+            if cheapest is None or cost < cheapest[1]:
+                cheapest = (cut, cost, n_offered, right)
+        if cheapest is not None:
+            recommended[name] = cheapest
 
     console.print()
-    for name, (cut, precision, offered, right) in recommended.items():
+    for name, (cut, cost, offered, right) in recommended.items():
         verdict = (
-            "[green]worth asking[/green]"
-            if precision >= 0.5
-            else "[yellow]marginal[/yellow]"
-            if precision >= 0.25
-            else "[red]not worth asking[/red]"
+            "[green]cheap \u2014 keep it[/green]"
+            if cost <= 4
+            else "[yellow]tolerable[/yellow]"
+            if cost <= 10
+            else "[red]too costly[/red]"
         )
         console.print(
-            f"[bold]{name}[/bold]: best at {cut:.2f} \u2014 {offered} questions, {right} right "
-            f"({precision:.0%}) \u2014 {verdict}"
+            f"[bold]{name}[/bold]: best at {cut:.2f} \u2014 {offered} questions for {right} "
+            f"merge(s), so [bold]{cost:.1f} questions per merge[/bold] \u2014 {verdict}"
         )
 
-    winner = max(recommended.items(), key=lambda kv: kv[1][1], default=None)
+    winner = min(recommended.items(), key=lambda kv: kv[1][1], default=None)
     console.print()
-    if winner is None or winner[1][1] < 0.25:
+    if winner is None:
         console.print(
-            "[bold red]VERDICT: merge suggestions are not earning their place.[/bold red] "
-            "No comparison separates the real splits from look-alikes well enough to be "
-            "worth interrupting you. The honest options are to drop the screen, or to keep "
-            "it only for the very top few pairs and accept that most splits go unfound."
+            "[bold red]VERDICT: nothing to find.[/bold red] No setting of either comparison "
+            "turns up a single real merge, so the screen has no work to do here."
+        )
+    elif winner[1][1] > 10:
+        console.print(
+            f"[bold red]VERDICT: drop the merge screen.[/bold red] The best on offer is "
+            f"{winner[1][1]:.0f} questions per merge gained ({winner[0]} at "
+            f"{winner[1][0]:.2f}). That is not worth a human's attention."
         )
     else:
         console.print(
             f"[bold green]VERDICT: use the {winner[0]} at {winner[1][0]:.2f}.[/bold green] "
-            f"{winner[1][2]} questions, {winner[1][3]} of them real "
-            f"({winner[1][1]:.0%} useful)."
+            f"About {winner[1][1]:.0f} question(s) per merge gained \u2014 "
+            f"{winner[1][2]} questions in the labelled sample, {winner[1][3]} of them real."
+        )
+        console.print(
+            "[dim]It will not find every split: a strict setting trades coverage for your "
+            "time. The ones it misses stay as two piles, which you can still merge by hand "
+            "when you notice.[/dim]"
         )
 
     console.print(

@@ -18,6 +18,67 @@ Newest entries at the top. Never rewrite history here — correct it with a new 
 
 ---
 
+## 2026-09-29 — Phase 2 closed on a held-out number; review tool built to v3
+
+**Phase:** 2 → 7  **Machine:** linux (runs), mac (code)  **Status:** done
+
+### Did
+- Swept HDBSCAN properly on ResNet50 and ResNet100, closing an unfair comparison: the
+  baseline 0.4776 had been an untuned figure standing against tuned rivals.
+- Embedded the whole pool with ResNet100 (`glintr100.onnx`) and swept it.
+- Wrote `diagnose_threshold.py` — picks the clustering cut by sweeping all 63,657 faces and
+  watching the largest pile, with reserved identities dropped by default.
+- Wrote `inspect_pile.py`, `preflight.py`, `estimate_error_bar.py`, `per_person_report.py`.
+- Ran the holdout **once**, against bands fixed in advance.
+- Built the review tool: v0 read-only ranked browser, then naming + undo, merge suggestions,
+  and repairs / junk bucket / search. Schema to v7. 112 tests.
+- Wrote `tune_merge_threshold.py` and `coverage_curve.py`.
+
+### Decided
+Decisions 39–49 in PLAN.md. The load-bearing ones: ResNet50 + components @ 0.51; thresholds
+chosen at full scale rather than on the gold set; review decisions keyed on **face** ids so a
+re-clustering costs no human work; no tuning knob ever exposed to a user.
+
+### Measured
+- **Held out: BCubed F1 0.9394** over 24 identities (P 0.976, R 0.906, 27 piles for 24 people)
+  against 0.9606 on the tuning half. Middle band of three fixed beforehand.
+- ResNet100 lost to ResNet50 (0.9471 vs 0.9606) at twice the size and runtime.
+- The welding point at full scale is cosine **0.49**; 0.51 is the loosest safe setting. Two
+  independent routes, same answer.
+- The largest pile (~5,100 faces, 8% of the library) is **one real person** — 249 labelled
+  faces, all the same identity, median eye distance 72 px against the library's 31.
+- At 0.49 a *different* pile of 10,851 faces appears, median eye 22 px, welding fifteen
+  people. Unreadable faces collapsing together — the predicted failure, two notches lower
+  than predicted.
+- Only **10 of 5,565** judgeable pile pairs are a split person, i.e. the clustering rarely
+  splits anyone.
+- Merge suggestions: 41 questions for 5 merges at the shipped floor; 2 for 1 at 0.45.
+  Closest-pair comparison did not beat pile averages.
+
+### Problems / surprises
+- **A conclusion reversed.** "The algorithm mattered; the model didn't" had been measured with
+  Chinese Whispers — the losing algorithm. Under components the models differ by 0.074, not
+  0.005. The explainer page now carries the correction rather than quietly dropping it.
+- **"HDBSCAN is structurally wrong" was overstated.** Tuned, it reaches 0.9521.
+- **A verdict judged on the wrong quantity.** The merge feature was called "not earning its
+  place" on precision percentage; with totals this small, questions-per-merge is the honest
+  measure, and at 0.45 it is two. The script now says that.
+- Bugs caught by testing before anything shipped: `np.split` returning original indices while
+  labels were read from the sorted view (piles held other people's faces, counts still looked
+  right); a shared SQLite writer crossing threads (every concurrent click after the first
+  returned 500); undo clearing one of two tables; repairs acting on another person's faces.
+- `results.csv` recorded the agglomerative default of 0.8 for the one-shot holdout run while
+  the run itself correctly used 0.51 — a logging bug in the non-sweep path, spotted by
+  Siddharth reading the results table.
+
+### Next
+Run `coverage_curve.py`. It answers the last open question — how many piles a person must name
+to cover their library — and it outranks any remaining threshold work. If a few hundred names
+cover most of a library the design holds; if not, the clustering must join more per pile or
+poor faces must be kept out of the queue.
+
+---
+
 ## 2026-09-21 — Gold set frozen; evaluation harness built
 
 **Phase:** 1  **Machine:** linux (labels) / mac (code)  **Status:** Phase 1 complete
